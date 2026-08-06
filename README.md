@@ -53,6 +53,17 @@ docker run --rm -p 19899:19899 --env-file .env rdagent-web
 # open http://localhost:19899
 ```
 
+## Quickstart examples
+
+After deploy, open **https://rd-agent.fly.dev/examples.html** (also linked via the floating
+"Quickstart Examples" button in the dashboard). It provides one-click runs:
+
+1. **Implement a model from a research report** — bundled sample PDF, best first try
+2. **Data Interpreter on a Kaggle task** — needs Kaggle credentials secrets
+3. **Finance factor mining** / 4. **Finance whole pipeline** — long-running qlib loops
+
+Each run streams live progress on the page and appears in the dashboard history.
+
 ## Notes
 
 - **Code execution**: generated code runs inside the container's own Python
