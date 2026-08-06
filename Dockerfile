@@ -37,4 +37,7 @@ EXPOSE 19899
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD curl -fs http://127.0.0.1:19899/test || exit 1
 
-CMD ["python3", "-m", "rdagent.log.server.app", "--port", "19899"]
+# Invitation gate: wraps the Flask app, requires invite links (admin console at /admin)
+COPY gate/gate.py gate.py
+
+CMD ["python3", "gate.py", "--port", "19899"]

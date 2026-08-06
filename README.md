@@ -64,6 +64,23 @@ After deploy, open **https://rd-agent.fly.dev/examples.html** (also linked via t
 
 Each run streams live progress on the page and appears in the dashboard history.
 
+## Access control (invitation links)
+
+The app is wrapped with an invitation gate (`gate/gate.py`):
+
+- Visitors must open an **invite link** `https://<host>/?invite=<token>` (sets a cookie,
+  token then disappears from the URL). Invites expire after **14 days** by default.
+- The **admin** sets a master key via the Fly secret `ADMIN_MASTER_KEY`, then opens
+  **`/admin?key=<MASTER>`** to create / list / revoke invite links.
+- `/test` (health check) stays open; everything else requires a valid invite.
+
+```bash
+flyctl secrets set --app rd-agent ADMIN_MASTER_KEY=so…cret
+```
+
+> Invite tokens are stored in `git_ignore_folder/invites.json` on the machine's local disk
+> (ephemeral): re-create invites after a redeploy if you haven't attached a volume.
+
 ## Notes
 
 - **Code execution**: generated code runs inside the container's own Python
