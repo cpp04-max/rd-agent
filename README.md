@@ -23,7 +23,7 @@ builds the Vue frontend, and installs everything into a single container.
 flyctl auth login
 
 # 2. from this repo's directory:
-flyctl launch --name rd-agent-cpp --region lax --copy-config --no-deploy
+flyctl launch --name rd-agent --region lax --copy-config --no-deploy
 
 # 3. set the LLM credentials (get a key from https://dashscope.console.aliyun.com/)
 flyctl secrets set \
@@ -39,7 +39,7 @@ flyctl secrets set \
 flyctl deploy --remote-only
 
 # 5. open it
-flyctl open        # -> https://rd-agent-cpp.fly.dev
+flyctl open        # -> https://rd-agent.fly.dev
 ```
 
 For **China-region** DashScope accounts use `OPENAI_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1`.
