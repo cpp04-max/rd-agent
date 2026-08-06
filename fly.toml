@@ -21,6 +21,15 @@ primary_region = 'lax'
     method = 'GET'
     path = '/test'
 
+[env]
+  # Persist invites + run history on the rdagent_data volume
+  INVITE_STORE = "/data/invites.json"
+  UI_TRACE_FOLDER = "/data/traces"
+
+[mounts]
+  source = "rdagent_data"
+  destination = "/data"
+
 [[vm]]
   cpu_kind = 'shared'
   cpus = 1
