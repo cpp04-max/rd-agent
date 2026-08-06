@@ -58,9 +58,14 @@ docker run --rm -p 19899:19899 --env-file .env rdagent-web
 After deploy, open **https://rd-agent.fly.dev/examples.html** (also linked via the floating
 "Quickstart Examples" button in the dashboard). It provides one-click runs:
 
-1. **Implement a model from a research report** — bundled sample PDF, best first try
-2. **Data Interpreter on a Kaggle task** — needs Kaggle credentials secrets
-3. **Finance factor mining** / 4. **Finance whole pipeline** — long-running qlib loops
+Designed for quant researchers, with one-click runs:
+
+1. **Implement a volatility model from a research report** — bundled EWMA-GARCH paper (General Model Implementation)
+2. **Implement an ensemble regressor from a report** — the end-to-end validated demo
+3. **Explore alpha factors** — qlib factor-mining loop (Finance Data Building)
+4. **Implement a factor from a research report** — bundled VWMOM factor report (Finance Data Building (Reports))
+5. **Whole quant pipeline** — factors → model → strategy (Finance Whole Pipeline)
+6. **Data Interpreter on a Kaggle task** — finance competition shortcuts; needs Kaggle credentials secrets
 
 Each run streams live progress on the page and appears in the dashboard history.
 
@@ -71,15 +76,19 @@ The app is wrapped with an invitation gate (`gate/gate.py`):
 - Visitors must open an **invite link** `https://<host>/?invite=<token>` (sets a cookie,
   token then disappears from the URL). Invites expire after **14 days** by default.
 - The **admin** sets a master key via the Fly secret `ADMIN_MASTER_KEY`, then opens
-  **`/admin?key=<MASTER>`** to create / list / revoke invite links.
+  **`/admin?key=<MASTER>`** to create invite links **in bulk** (up to 50 at once,
+  configurable validity and note), copy single or all links, and revoke any invite.
 - `/test` (health check) stays open; everything else requires a valid invite.
 
 ```bash
 flyctl secrets set --app rd-agent ADMIN_MASTER_KEY=so…cret
 ```
 
-> Invite tokens are stored in `git_ignore_folder/invites.json` on the machine's local disk
-> (ephemeral): re-create invites after a redeploy if you haven't attached a volume.
+> Invites and traces persist on the Fly volume (`rdagentdata` mounted at `/data`,
+> `INVITE_STORE=/data/invites.json`, `UI_TRACE_FOLDER=/data/traces`) — they survive redeploys.
+
+> **Security:** use a long, random `ADMIN_MASTER_KEY`. Short keys are guessable on a
+> public site and appear in the `/admin?key=*** URL.
 
 ## Notes
 
@@ -87,7 +96,7 @@ flyctl secrets set --app rd-agent ADMIN_MASTER_KEY=so…cret
   (`*_env_type=conda`, no extra setup). For containerised execution, mount the Docker
   socket and switch both env vars to `docker`.
 - **First finance run** provisions a qlib conda environment and can take a while.
-- **Persistence**: workspace/traces live on the machine's ephemeral disk. Add a Fly
-  volume if you need them to survive redeploys.
+- **Persistence**: `fly.toml` mounts the `rdagentdata` volume at `/data` for invites and
+  traces; create it once with `flyctl volumes create rdagentdata --region lax`.
 - Models: defaults to `qwen3-max`; any DashScope model works via the OpenAI-compatible
   endpoint (e.g. `openai/qwen-plus`, `openai/qwen3-coder-plus`).

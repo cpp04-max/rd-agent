@@ -3,91 +3,136 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RD-Agent · Quickstart &amp; Examples</title>
+<title>RD-Agent · Quant Research Workbench</title>
 <style>
 :root{color-scheme:light;}
 *{box-sizing:border-box}
 body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#f5f7fb;color:#1f2430}
-header{background:linear-gradient(120deg,#0b1f3a,#123a6d 60%,#1677ff);color:#fff;padding:28px 24px}
-header h1{margin:0 0 6px;font-size:24px}
-header p{margin:0;opacity:.85;font-size:14px;max-width:860px}
-main{max-width:1080px;margin:24px auto;padding:0 16px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+header{background:linear-gradient(120deg,#0b1f3a,#123a6d 60%,#1677ff);color:#fff;padding:30px 24px 22px}
+header .wrap{max-width:1080px;margin:0 auto}
+header h1{margin:0 0 6px;font-size:25px}
+header p{margin:0;opacity:.88;font-size:14px;max-width:860px;line-height:1.55}
+header a{color:#bcd4ff;text-decoration:none;font-weight:600}
+header .links{margin-top:12px;font-size:13px;display:flex;gap:18px;flex-wrap:wrap}
+.flow{background:#0e2a52;color:#cfe0ff;font-size:12.5px;padding:8px 24px}
+.flow .wrap{max-width:1080px;margin:0 auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.flow b{background:rgba(255,255,255,.12);padding:2px 9px;border-radius:999px;font-weight:600}
+.flow .arr{opacity:.6}
+main{max-width:1080px;margin:22px auto;padding:0 16px}
+h2.sec{font-size:15px;text-transform:uppercase;letter-spacing:.06em;color:#414a59;margin:26px 0 10px;display:flex;align-items:center;gap:8px}
+h2.sec::after{content:"";flex:1;height:1px;background:#e2e7f0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .card{background:#fff;border:1px solid #e6eaf2;border-radius:12px;padding:18px;box-shadow:0 1px 3px rgba(16,24,40,.05)}
-.card h2{margin:0 0 4px;font-size:17px}
-.card .sub{font-size:13px;color:#5b6472;margin:0 0 12px}
-.badge{display:inline-block;font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;margin-left:6px;vertical-align:middle}
-.badge.fast{background:#e8f7ee;color:#0a7d3b}.badge.long{background:#fff4e0;color:#b25e00}.badge.adv{background:#eee;color:#555}
+.card h3{margin:0 0 4px;font-size:16.5px}
+.card .sub{font-size:13px;color:#5b6472;margin:0 0 12px;line-height:1.5}
+.badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;margin-left:6px;vertical-align:middle}
+.badge.fast{background:#e8f7ee;color:#0a7d3b}.badge.long{background:#fff4e0;color:#b25e00}.badge.adv{background:#eee;color:#555}.badge.new{background:#eef4ff;color:#123a6d}
 label{display:block;font-size:12px;font-weight:600;color:#414a59;margin:10px 0 4px}
 input[type=text],input[type=number]{width:100%;padding:8px 10px;border:1px solid #d4dae5;border-radius:8px;font-size:14px}
 button.run{margin-top:14px;background:#1677ff;border:0;color:#fff;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;cursor:pointer}
 button.run:hover{background:#0e5fd8}
 button.run:disabled{background:#9db8e4;cursor:default}
 .note{font-size:12px;color:#7a8290;margin-top:10px;line-height:1.5}
-.warn{background:#fff7e8;border:1px solid #ffd591;border-radius:8px;padding:8px 10px;font-size:12px;color:#874d00;margin-top:10px}
-#monitor{grid-column:1/-1;display:none}
-#monitor h2{margin:0 0 10px;font-size:16px}
+.warn{background:#fff7e8;border:1px solid #ffd591;border-radius:8px;padding:8px 10px;font-size:12px;color:#874d00;margin-top:10px;line-height:1.5}
+.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.chip{border:1px solid #d4dae5;background:#f8fafc;color:#334155;border-radius:999px;padding:6px 12px;font-size:13px;cursor:pointer}
+.chip:hover{border-color:#1677ff;color:#1677ff}
+.chip.sel{background:#1677ff;border-color:#1677ff;color:#fff}
+#banner{margin:18px auto 0;padding:0 16px;max-width:1080px}
+#banner .inner{background:#eef4ff;border:1px solid #bcd4ff;color:#123a6d;border-radius:10px;padding:10px 14px;font-size:13px;line-height:1.5}
+#monitor{margin-top:26px;display:none}
+#monitor h3{margin:0 0 10px;font-size:16px}
 #steps{list-style:none;margin:0;padding:0;max-height:340px;overflow:auto}
 #steps li{padding:8px 10px;border-bottom:1px solid #f0f2f7;font-size:13px;display:flex;gap:10px;align-items:baseline}
 #steps li .t{color:#8a93a3;font-size:11px;min-width:64px}
 #steps li.ok{background:#f3fbf5}#steps li.bad{background:#fdeeee}
-#banner{max-width:1080px;margin:16px auto 0;padding:0 16px}
-#banner .inner{background:#eef4ff;border:1px solid #bcd4ff;color:#123a6d;border-radius:10px;padding:10px 14px;font-size:13px}
-footer{max-width:1080px;margin:10px auto 40px;padding:0 16px;font-size:12px;color:#8a93a3}
+footer{max-width:1080px;margin:14px auto 40px;padding:0 16px;font-size:12px;color:#8a93a3}
 a{color:#1677ff}
-@media(max-width:760px){main{grid-template-columns:1fr}}
+code{background:#eef1f6;border-radius:4px;padding:1px 5px;font-size:12px}
+@media(max-width:760px){.grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <header>
-  <h1>RD-Agent — Quickstart &amp; Examples</h1>
-  <p>One-click examples for the R&amp;D-Agent scenarios. Each run is live: you can watch the agent's research → coding → feedback loop below, then open the run in the <a href="/" style="color:#bcd4ff">full dashboard</a>.</p>
+ <div class="wrap">
+  <h1>RD-Agent — Quant Research Workbench</h1>
+  <p>An autonomous research &amp; development agent for quant work: it turns model ideas, factor hypotheses and research reports into <b>running, backtested code</b>. Pick an example below and watch the full loop live — then open any run in the <a href="/">dashboard</a>.</p>
+  <div class="links"><a href="/">📊 Dashboard</a><a href="/admin">🔑 Invite admin</a></div>
+ </div>
 </header>
-<div id="banner"><div class="inner">💡 Runs appear in the full dashboard's history once they produce results. A run that stops immediately with <b>“config: null”</b> means the LLM backend is not configured — set <code>OPENAI_API_KEY</code> (DashScope) in Fly secrets.</div></div>
+<div class="flow"><div class="wrap">
+ <b>Research</b><span class="arr">→</span> hypothesis <span class="arr">→</span>
+ <b>Experiment</b><span class="arr">→</span> tasks &amp; code <span class="arr">→</span>
+ <b>Run &amp; feedback</b><span class="arr">→</span> metrics / backtest <span class="arr">→</span>
+ <b>Evolve</b><span class="arr">↺</span> repeat
+</div></div>
+
 <main>
+<div id="banner"><div class="inner">💡 Runs appear in the <a href="/">dashboard</a> history once they produce results. A run that stops immediately with <b>“config: null”</b> means the LLM backend is not configured — the admin should set the DashScope secrets (<code>OPENAI_API_KEY</code>, <code>CHAT_MODEL</code>, <code>OPENAI_API_BASE</code>) in Fly.</div></div>
 
+<h2 class="sec">① Zero-setup demos — one click, bundled inputs</h2>
+<div class="grid">
   <div class="card">
-    <h2>1 · Implement a model from a research report <span class="badge fast">best first try · ~2–10 min</span></h2>
-    <p class="sub">Scenario: <b>General Model Implementation</b>. The agent reads a PDF paper/report, extracts the model design, writes the code, runs it and iterates.</p>
-    <button class="run" id="run-gm">▶ Run example: boosting ensemble from sample report</button>
-    <div class="note">Uses the bundled 1-page sample report (<a href="/examples-assets/sample_model_report.pdf" target="_blank">view it</a>). You can also run your own PDF from the full dashboard.</div>
+    <h3>Implement a volatility model from a research report <span class="badge fast">quant · ~5–15 min</span></h3>
+    <p class="sub"><b>Scenario: General Model Implementation.</b> The agent reads a bundled quant paper (EWMA–GARCH hybrid volatility forecasting), extracts the model design, writes the Python implementation, runs it and iterates until the metrics converge.</p>
+    <button class="run" id="run-vol">▶ Implement the volatility model</button>
+    <div class="note">Input: bundled 1-page report <a href="/examples-assets/sample_quant_model.pdf" target="_blank">EWMA-GARCH Hybrid (view PDF)</a>. Metrics: MSE + quasi-log-likelihood on synthetic returns. Or run your own PDF from the dashboard.</div>
   </div>
-
   <div class="card">
-    <h2>2 · Data Interpreter on a Kaggle task <span class="badge adv">needs Kaggle credentials</span></h2>
-    <p class="sub">Scenario: <b>Data Science</b>. Upload-free: pick an MLE-Bench competition and the agent plans, codes, executes and iterates on the data.</p>
-    <label>Competition</label>
+    <h3>Implement an ensemble regressor from a report <span class="badge fast">validated e2e ✓ · ~5–15 min</span></h3>
+    <p class="sub"><b>Scenario: General Model Implementation.</b> Same flow on an AdaBoost-style weighted ensemble for tabular regression — the example that was tested end-to-end on this deployment.</p>
+    <button class="run" id="run-gm">▶ Implement the ensemble model</button>
+    <div class="note">Input: bundled report <a href="/examples-assets/sample_model_report.pdf" target="_blank">AdaBoost-Style Ensemble (view PDF)</a>.</div>
+  </div>
+</div>
+
+<h2 class="sec">② Alpha factor research — qlib</h2>
+<div class="grid">
+  <div class="card">
+    <h3>Explore alpha factors with the AI loop <span class="badge long">long-running</span></h3>
+    <p class="sub"><b>Scenario: Finance Data Building.</b> qlib-based loop that proposes, implements and backtests alpha factor hypotheses on the CN/CSI300 universe.</p>
+    <label>Loops</label>
+    <input type="number" id="ff-loops" min="1" value="1">
+    <button class="run" id="run-ff">▶ Start factor exploration</button>
+    <div class="note">First run auto-provisions qlib and its market data (~1 GB download) — expect a slow start on the 1 GB machine. Prefer loops = 1 for a first run.</div>
+  </div>
+  <div class="card">
+    <h3>Implement a factor from a research report <span class="badge new">quant report → factor</span></h3>
+    <p class="sub"><b>Scenario: Finance Data Building (Reports).</b> The agent reads a factor research report and implements/backtests the described alpha factor in qlib. Try the bundled <b>Volume-Weighted Momentum (VWMOM)</b> factor, or upload your own report.</p>
+    <button class="run" id="run-fr">▶ Implement VWMOM factor from report</button>
+    <div class="note">Input: bundled report <a href="/examples-assets/sample_factor_report.pdf" target="_blank">VWMOM Alpha Factor (view PDF)</a>. Same qlib provisioning note as factor exploration.</div>
+  </div>
+</div>
+
+<h2 class="sec">③ End-to-end quant pipeline</h2>
+<div class="grid">
+  <div class="card">
+    <h3>Whole quant pipeline: factors → model → strategy <span class="badge long">long-running</span></h3>
+    <p class="sub"><b>Scenario: Finance Whole Pipeline.</b> Full quant R&amp;D loop: alpha factor construction, return forecasting model, and portfolio strategy, evolved across rounds.</p>
+    <label>Loops</label>
+    <input type="number" id="fq-loops" min="1" value="1">
+    <button class="run" id="run-fq">▶ Start full pipeline</button>
+    <div class="note">Same qlib prerequisites. For a first finance run, use section ② instead.</div>
+  </div>
+  <div class="card">
+    <h3>Data Interpreter on a Kaggle task <span class="badge adv">needs Kaggle credentials</span></h3>
+    <p class="sub"><b>Scenario: Data Science.</b> The agent plans, codes and iterates on a competition dataset. Good finance-flavoured picks:</p>
+    <div class="chips" id="comps"></div>
+    <label>Competition (or type any MLE-Bench name)</label>
     <input type="text" id="ds-comp" value="titanic">
     <label>Loops (blank = until time limit)</label>
     <input type="number" id="ds-loops" min="1" placeholder="e.g. 3">
     <button class="run" id="run-ds">▶ Start Data Science run</button>
-    <div class="warn">The container needs <code>KAGGLE_USERNAME</code> / <code>KAGGLE_JSON</code> secrets to download competition data (dataset sizes vary; small competitions work best on the 1 GB machine).</div>
+    <div class="warn">The container needs <code>KAGGLE_USERNAME</code> / <code>KAGGLE_JSON</code> Fly secrets to download competition data. Dataset sizes vary — small competitions (titanic) work best on the 1 GB machine.</div>
   </div>
+</div>
 
-  <div class="card">
-    <h2>3 · Finance: factor mining <span class="badge long">long-running</span></h2>
-    <p class="sub">Scenario: <b>Finance Data Building</b>. qlib-based research loop that proposes, implements and backtests alpha factors.</p>
-    <label>Loops</label>
-    <input type="number" id="ff-loops" min="1" value="1">
-    <button class="run" id="run-ff">▶ Start factor-mining run</button>
-    <div class="note">First run auto-provisions qlib and its data (~1 GB download) — expect a slow start and watch memory.</div>
-  </div>
-
-  <div class="card">
-    <h2>4 · Finance: whole quant pipeline <span class="badge long">long-running</span></h2>
-    <p class="sub">Scenario: <b>Finance Whole Pipeline</b>. End-to-end quant R&amp;D: factors → model → portfolio strategy.</p>
-    <label>Loops</label>
-    <input type="number" id="fq-loops" min="1" value="1">
-    <button class="run" id="run-fq">▶ Start quant pipeline run</button>
-    <div class="note">Same qlib prerequisites as example 3. Prefer example 3 for a first finance run.</div>
-  </div>
-
-  <div class="card" id="monitor">
-    <h2>Live run: <span id="mon-id"></span> · <a href="/" >open in full dashboard ↗</a></h2>
-    <ul id="steps"></ul>
-  </div>
-
+<div class="card" id="monitor">
+  <h3>Live run: <span id="mon-id"></span> · <a href="/">open in dashboard ↗</a></h3>
+  <ul id="steps"></ul>
+</div>
 </main>
-<footer>RD-Agent web app · scenarios run as background processes on the Fly machine; this page polls the trace stream every 5&nbsp;seconds.</footer>
+<footer>RD-Agent web app · scenarios run as background processes on the Fly machine; this page polls the trace stream every 5&nbsp;seconds. Invites are managed by the admin at <a href="/admin">/admin</a>.</footer>
 
 <script>
 const LABELS = {
@@ -156,21 +201,26 @@ async function launch(fd,btn){
 }
 document.querySelectorAll("button.run").forEach(b=>b.dataset.label=b.textContent);
 
-document.getElementById("run-gm").onclick=async e=>{
-  const btn=e.currentTarget;
-  const blob=await (await fetch("/examples-assets/sample_model_report.pdf")).blob();
+async function bundledPdf(name){
+  const blob=await (await fetch("/examples-assets/"+name)).blob();
+  return new File([blob],name,{type:"application/pdf"});
+}
+document.getElementById("run-vol").onclick=async e=>{
   const fd=new FormData();
   fd.append("scenario","General Model Implementation");
-  fd.append("files",blob,"sample_model_report.pdf");
-  launch(fd,btn);
+  fd.append("files",await bundledPdf("sample_quant_model.pdf"));
+  launch(fd,e.currentTarget);
 };
-document.getElementById("run-ds").onclick=e=>{
-  const comp=document.getElementById("ds-comp").value.trim();
-  if(!comp)return alert("Enter a competition name");
+document.getElementById("run-gm").onclick=async e=>{
   const fd=new FormData();
-  fd.append("scenario","Data Science");
-  fd.append("competition","MLE-Bench:"+comp);
-  const l=document.getElementById("ds-loops").value; if(l)fd.append("loops",l);
+  fd.append("scenario","General Model Implementation");
+  fd.append("files",await bundledPdf("sample_model_report.pdf"));
+  launch(fd,e.currentTarget);
+};
+document.getElementById("run-fr").onclick=async e=>{
+  const fd=new FormData();
+  fd.append("scenario","Finance Data Building (Reports)");
+  fd.append("files",await bundledPdf("sample_factor_report.pdf"));
   launch(fd,e.currentTarget);
 };
 document.getElementById("run-ff").onclick=e=>{
@@ -183,6 +233,24 @@ document.getElementById("run-fq").onclick=e=>{
   const fd=new FormData();
   fd.append("scenario","Finance Whole Pipeline");
   fd.append("loops",document.getElementById("fq-loops").value||"1");
+  launch(fd,e.currentTarget);
+};
+const COMPS=["titanic","jane-street-market-prediction","amex-default-prediction","optiver-realized-volatility-prediction"];
+const cwrap=document.getElementById("comps");
+COMPS.forEach(c=>{
+  const b=document.createElement("button");
+  b.type="button"; b.className="chip"+(c==="titanic"?" sel":""); b.textContent=c;
+  b.onclick=()=>{document.getElementById("ds-comp").value=c;
+    cwrap.querySelectorAll(".chip").forEach(x=>x.classList.remove("sel")); b.classList.add("sel");};
+  cwrap.appendChild(b);
+});
+document.getElementById("run-ds").onclick=e=>{
+  const comp=document.getElementById("ds-comp").value.trim();
+  if(!comp)return alert("Enter a competition name");
+  const fd=new FormData();
+  fd.append("scenario","Data Science");
+  fd.append("competition","MLE-Bench:"+comp);
+  const l=document.getElementById("ds-loops").value; if(l)fd.append("loops",l);
   launch(fd,e.currentTarget);
 };
 </script>

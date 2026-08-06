@@ -130,12 +130,23 @@ def admin_invites():
     except Exception:
         days = 14
     days = min(max(days, 0.25), 365)
-    tok, exp = _create(days, str(j.get("note", ""))[:120])
-    return jsonify({
-        "token": tok,
-        "link": request.host_url.rstrip("/") + "/?invite=" + tok,
-        "expires": exp.isoformat(),
-    })
+    try:
+        count = int(j.get("count", 1))
+    except Exception:
+        count = 1
+    count = min(max(count, 1), 50)
+    note = str(j.get("note", ""))[:120]
+    created = []
+    for _ in range(count):
+        tok, exp = _create(days, note)
+        created.append({
+            "token": tok,
+            "link": request.host_url.rstrip("/") + "/?invite=" + tok,
+            "expires": exp.isoformat(),
+        })
+    resp = {"invites": created}
+    resp.update(created[0])  # back-compat single-invite fields
+    return jsonify(resp)
 
 
 @app.route("/admin/invites/revoke", methods=["POST"])
@@ -179,38 +190,70 @@ ADMIN_HTML = """<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">
 <title>RD-Agent - Invite admin</title><style>
 :root{color-scheme:light}body{margin:0;font-family:system-ui,sans-serif;background:#f5f7fb;color:#1f2430}
 header{background:linear-gradient(120deg,#0b1f3a,#123a6d 60%,#1677ff);color:#fff;padding:22px 24px}
-header h1{margin:0;font-size:20px}main{max-width:860px;margin:22px auto;padding:0 16px}
+header h1{margin:0;font-size:20px}header p{margin:4px 0 0;font-size:13px;opacity:.85}
+main{max-width:960px;margin:22px auto;padding:0 16px}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;background:#fff;border:1px solid #e6eaf2;
-border-radius:12px;padding:16px;margin-bottom:16px}
+border-radius:12px;padding:16px;margin-bottom:14px}
+label{font-size:13px;font-weight:600;color:#414a59;display:flex;gap:6px;align-items:center}
 input,select{padding:9px 10px;border:1px solid #d4dae5;border-radius:8px;font-size:14px}
 button{background:#1677ff;border:0;color:#fff;font-weight:600;font-size:14px;padding:9px 16px;border-radius:8px;cursor:pointer}
 button.gray{background:#64748b}button.red{background:#dc2626;padding:5px 10px;font-size:12px}
+button.small{padding:5px 10px;font-size:12px}
 table{width:100%;border-collapse:collapse;background:#fff;border:1px solid #e6eaf2;border-radius:12px;overflow:hidden;font-size:13px}
 th,td{padding:10px 12px;border-bottom:1px solid #f0f2f7;text-align:left;vertical-align:middle}
 th{background:#f8fafc;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:#5b6472}
-a{color:#1677ff;word-break:break-all}.msg{font-size:13px;color:#5b6472;margin:8px 2px}</style></head><body>
-<header><h1>Invitation admin</h1></header><main>
-<div class="row"><label>Master key <input type="password" id="key" style="width:260px"></label>
-<button onclick="load()">Load invites</button></div>
-<div class="row"><label>New invite valid for <input type="number" id="days" value="14" min="1" max="365" style="width:80px"> days</label>
-<input id="note" placeholder="note (e.g. person's name)" style="flex:1;min-width:180px">
-<button onclick="create()">Create invite</button></div>
+a{color:#1677ff;word-break:break-all}
+.msg{font-size:13px;color:#5b6472;margin:8px 2px;min-height:18px}
+.hint{font-size:12px;color:#8a93a3;margin:0 2px 14px}
+.pill{display:inline-block;background:#e8f7ee;color:#0a7d3b;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
+</style></head><body>
+<header><h1>Invitation admin</h1><p>Create, copy and revoke invite links. Each invite grants access until its expiry date.</p></header>
+<main>
+<div class="row"><label>Master key <input type="password" id="key" style="width:250px"></label>
+<button onclick="load()">Load invites</button>
+<a href="/" style="margin-left:auto;font-size:13px">← dashboard</a></div>
+<p class="hint" id="hint"></p>
+
+<div class="row">
+  <label>Number of invites <input type="number" id="count" value="1" min="1" max="50" style="width:74px"></label>
+  <label>Valid for <input type="number" id="days" value="14" min="1" max="365" style="width:74px"> days</label>
+  <input id="note" placeholder="note (e.g. name or team)" style="flex:1;min-width:170px">
+  <button onclick="create()">Create invite(s)</button>
+  <button class="gray" onclick="copyAll()">Copy all links</button>
+</div>
 <div class="msg" id="msg"></div>
-<table><thead><tr><th>Invite link</th><th>Expires (UTC)</th><th>Note</th><th></th></tr></thead>
+
+<table><thead><tr><th style="width:46%">Invite link</th><th>Expires (UTC)</th><th>Time left</th><th>Note</th><th></th></tr></thead>
 <tbody id="tb"></tbody></table>
 </main><script>
 function k(){return document.getElementById('key').value.trim();}
-function msg(t,bad){var e=document.getElementById('msg');e.textContent=t;e.style.color=bad?'#c0392b':'#5b6472';}
+function msg(t,bad){var e=document.getElementById('msg');e.textContent=t;e.style.color=bad?'#c0392b':'#0a7d3b';}
+function esc(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
 async function api(path,opt){var r=await fetch(path,Object.assign({headers:{'Content-Type':'application/json'}},opt||{}));
 if(r.status===403){msg('Wrong master key.',true);throw 0;}return r.json();}
+function leftDays(exp){return Math.max(0,Math.ceil((new Date(exp)-Date.now())/86400000));}
 async function load(){try{var d=await api('/admin/invites?key='+encodeURIComponent(k()));var tb=document.getElementById('tb');
-tb.innerHTML='';d.forEach(function(x){var tr=document.createElement('tr');
-tr.innerHTML='<td><a href="'+x.link+'" target="_blank">'+x.link+'</a><br><button class="gray" style="margin-top:4px;padding:3px 8px;font-size:12px" onclick="navigator.clipboard.writeText(\\''+x.link+'\\');this.textContent=\\'copied!\\'">copy</button></td><td>'+x.expires.replace('T',' ').slice(0,16)+'</td><td>'+ (x.note||'') +'</td><td><button class="red" data-t="'+x.token+'" onclick="revoke(this.dataset.t)">revoke</button></td>';
-tb.appendChild(tr);});msg(d.length+' active invite(s).');}catch(e){}}
-async function create(){try{var x=await api('/admin/invites',{method:'POST',body:JSON.stringify({key:k(),days:+document.getElementById('days').value,note:document.getElementById('note').value})});
-msg('Created: '+x.link+'  (expires '+x.expires.replace('T',' ').slice(0,16)+' UTC)');document.getElementById('note').value='';load();}catch(e){}}
-async function revoke(t){try{await api('/admin/invites/revoke',{method:'POST',body:JSON.stringify({key:k(),token:t})});msg('Revoked.');load();}catch(e){}}
-var qk=new URLSearchParams(location.search).get('key');if(qk){document.getElementById('key').value=qk;load();}
+tb.innerHTML='';window._links=[];
+d.forEach(function(x){window._links.push(x.link);var tr=document.createElement('tr');
+tr.innerHTML='<td><a href="'+esc(x.link)+'" target="_blank">'+esc(x.link)+'</a><br>'+
+'<button class="gray small" style="margin-top:4px" data-l="'+esc(x.link)+'" onclick="copyOne(this)">copy link</button></td>'+
+'<td>'+esc(x.expires).replace('T',' ').slice(0,16)+'</td>'+
+'<td><span class="pill">'+leftDays(x.expires)+' d</span></td>'+
+'<td>'+esc(x.note||'')+'</td>'+
+'<td><button class="red" data-t="'+esc(x.token)+'" onclick="revoke(this.dataset.t)">revoke</button></td>';
+tb.appendChild(tr);});
+msg(d.length+' active invite(s).',false);document.getElementById('msg').style.color='#5b6472';}catch(e){}}
+async function create(){var c=Math.max(1,Math.min(50,+document.getElementById('count').value||1));
+try{var x=await api('/admin/invites',{method:'POST',body:JSON.stringify({key:k(),days:+document.getElementById('days').value||14,count:c,note:document.getElementById('note').value})});
+msg('Created '+x.invites.length+' invite(s). Latest: '+x.invites[x.invites.length-1].link,false);load();}catch(e){}}
+function copyOne(b){navigator.clipboard.writeText(b.dataset.l);b.textContent='copied!';setTimeout(function(){b.textContent='copy link';},1200);}
+function copyAll(){if(!window._links||!window._links.length){msg('No invites to copy.',true);return;}
+navigator.clipboard.writeText(window._links.join('\\n'));msg(window._links.length+' link(s) copied to clipboard.',false);}
+async function revoke(t){try{await api('/admin/invites/revoke',{method:'POST',body:JSON.stringify({key:k(),token:t})});msg('Revoked.',false);load();}catch(e){}}
+var qk=new URLSearchParams(location.search).get('key');
+if(qk){document.getElementById('key').value=qk;load();}
+document.getElementById('key').addEventListener('input',function(){var v=this.value;
+document.getElementById('hint').textContent=(v&&v.length<12)?'Tip: short master keys are guessable - set a long random ADMIN_MASTER_KEY secret in Fly.':'';});
 </script></body></html>"""
 
 
