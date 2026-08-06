@@ -22,7 +22,7 @@ primary_region = 'lax'
     path = '/test'
 
 [env]
-  # Persist invites + run history on the rdagent_data volume
+  # Persist invites + run history on the rdagentdata volume
   INVITE_STORE = "/data/invites.json"
   UI_TRACE_FOLDER = "/data/traces"
 
