@@ -1,16 +1,25 @@
-app = "rd-agent-cpp"
+# Fly.io configuration for the RD-Agent web app
+# App name/region below match `flyctl launch --name rd-agent --region ams`
+app = "rd-agent"
 primary_region = "ams"
 
+[build]
+
 [http_service]
-auto_start_machines = true
-auto_stop_machines = true
-force_https = true
-internal_port = 8_080
-min_machines_running = 0
-processes = [ "app" ]
+  internal_port = 19899
+  force_https = true
+  # keep the machine up: RD-Agent scenarios are long-running background loops
+  auto_stop_machines = false
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "10s"
+    grace_period = "60s"
+    method = "GET"
+    path = "/test"
 
 [[vm]]
-cpu_kind = "shared"
-cpus = 1
-memory = "1gb"
-memory_mb = 256
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 1024
