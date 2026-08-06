@@ -1,7 +1,7 @@
 # Fly.io configuration for the RD-Agent web app
-# App name/region below match `flyctl launch --name rd-agent-cpp --region ams`
+# App name/region below match `flyctl launch --name rd-agent-cpp --region lax`
 app = "rd-agent-cpp"
-primary_region = "ams"
+primary_region = "lax"
 
 [build]
 
