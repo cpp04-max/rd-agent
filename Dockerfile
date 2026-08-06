@@ -7,7 +7,7 @@ RUN apk add --no-cache git
 RUN git clone --depth 1 https://github.com/microsoft/RD-Agent.git /src
 WORKDIR /src/web
 RUN npm install --legacy-peer-deps --no-audit --no-fund \
- && npm run build           # outputs to /src/git_ignore_folder/static
+ && npm run build:flask           # outputs to /src/git_ignore_folder/static
 
 FROM python:3.10-slim
 ENV PIP_NO_CACHE_DIR=1 PYTHONUNBUFFERED=1
