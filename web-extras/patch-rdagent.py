@@ -344,4 +344,37 @@ patch(
     "P10 line-buffered run stdout",
 )
 
+
+# ---------------------------------------------------------------- P11
+# The CoSTEER model coder (General Model Implementation, and the model step of
+# fin_model/fin_quant) executes generated code via MODEL_COSTEER env selection.
+# get_model_env() in conf.py already gets a conda->LocalEnv fallback from P2,
+# but ModelCoder.execute() in model.py picks its env independently and dies when
+# conda/docker are absent (prod logs: conda exit 127, then a PATH without
+# /usr/local/bin -> 'python' not found). Add the same LocalEnv fallback.
+patch(
+    "rdagent/components/coder/model_coder/model.py",
+    "import pickle\nimport site\nimport traceback\n",
+    "import os\nimport pickle\nimport shutil\nimport site\nimport traceback\n",
+    "P11b model.py imports",
+)
+patch(
+    "rdagent/components/coder/model_coder/model.py",
+    "                if MODEL_COSTEER_SETTINGS.env_type == \"docker\":\n"
+    "                    qtde = QTDockerEnv()\n"
+    "                elif MODEL_COSTEER_SETTINGS.env_type == \"conda\":\n"
+    "                    qtde = QlibCondaEnv(conf=QlibCondaConf())\n"
+    "                else:\n"
+    "                    raise ValueError(f\"Unknown env_type: {MODEL_COSTEER_SETTINGS.env_type}\")",
+    "                if MODEL_COSTEER_SETTINGS.env_type == \"docker\" and shutil.which(\"docker\"):\n"
+    "                    qtde = QTDockerEnv()\n"
+    "                elif MODEL_COSTEER_SETTINGS.env_type == \"conda\" and shutil.which(\"conda\"):\n"
+    "                    qtde = QlibCondaEnv(conf=QlibCondaConf())\n"
+    "                else:\n"
+    "                    from rdagent.utils.env import LocalConf, LocalEnv\n"
+    "\n"
+    f"                    qtde = LocalEnv(conf={LOCAL_CONF})",
+    "P11b model execute local fallback",
+)
+
 print("All rdagent patches applied.", flush=True)

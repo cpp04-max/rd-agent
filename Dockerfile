@@ -32,6 +32,14 @@ RUN uv pip install --system -r requirements.txt \
 # Finance (qlib) scenarios: qlib + mlflow + lightgbm + deps
 RUN uv pip install --system pyqlib
 
+# Model execution harness (General Model Implementation + fin model/quant steps)
+# imports torch: the CoSTEER runner does `import torch` and calls the generated
+# nn.Module. CPU-only wheels keep the image small.
+# --index-url pins the CPU-only torch wheel; --extra-index-url lets its pure-python
+# deps (filelock, sympy, jinja2, ...) resolve from PyPI. Without the extra index the
+# install fails; without the cpu index uv would pull the multi-GB CUDA build.
+RUN uv pip install --system torch --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple
+
 # Built Vue frontend served by the Flask log server
 COPY --from=frontend /src/git_ignore_folder/static /app/RD-Agent/git_ignore_folder/static
 

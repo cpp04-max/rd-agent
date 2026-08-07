@@ -134,13 +134,13 @@ code{background:#eef1f6;border-radius:4px;padding:1px 5px;font-size:12px}
     <h3>Prime Attention: per-pair modulated attention for MTS <span class="badge new">arXiv 2509.12196 · ~5–15 min</span></h3>
     <p class="sub"><b>Scenario: General Model Implementation.</b> A simplified, CPU-runnable reproduction of <i>Dynamic Relational Priming Improves Transformer in Multivariate Time Series</i> (Lee &amp; Clark): keys/values are modulated by a pair-specific “primer” built from FFT lead-lag cross-correlations, then compared head-to-head with standard attention on synthetic data with heterogeneous channel relationships.</p>
     <button class="run" id="run-pa">▶ Reproduce Prime Attention (mini)</button>
-    <div class="note">Input: bundled spec <a href="/examples-assets/sample_prime_attention.pdf" target="_blank">Prime Attention mini (view PDF)</a>. NumPy/scikit-learn only, seeds fixed, runtime &lt; 2 min. Watch the dashboard to see the agent implement, run and iterate on it.</div>
+    <div class="note">Input: bundled spec <a href="/examples-assets/sample_prime_attention.pdf" target="_blank">Prime Attention mini (view PDF)</a>. PyTorch (CPU) model built from scratch by the agent, seeds fixed, runtime &lt; 10 min. Watch the dashboard to see the agent implement, run and iterate on it.</div>
   </div>
   <div class="card">
     <h3>ChaTSFM: channel adapter for frozen TS foundation models <span class="badge new">ICML 2026 · ~5–15 min</span></h3>
     <p class="sub"><b>Scenario: General Model Implementation.</b> A simplified reproduction of <i>Channel Adapter for Time Series Foundation Models in Zero-Shot Multivariate Forecasting</i> (Li et al.): a frozen channel-independent backbone plus a tiny (8-parameter) adapter — descriptor-conditioned channel similarity + gated sparse blending — pre-trained on a budgeted synthetic corpus and evaluated zero-shot.</p>
     <button class="run" id="run-chatsfm">▶ Reproduce ChaTSFM (mini)</button>
-    <div class="note">Input: bundled spec <a href="/examples-assets/sample_chatsfm.pdf" target="_blank">ChaTSFM mini (view PDF)</a>. NumPy/SciPy only, seeds fixed, runtime &lt; 3 min.</div>
+    <div class="note">Input: bundled spec <a href="/examples-assets/sample_chatsfm.pdf" target="_blank">ChaTSFM mini (view PDF)</a>. PyTorch (CPU) model built from scratch by the agent, seeds fixed, runtime &lt; 10 min.</div>
   </div>
 </div>
 
@@ -150,7 +150,7 @@ code{background:#eef1f6;border-radius:4px;padding:1px 5px;font-size:12px}
     <h3>Stock-ranking Mixture-of-Experts on real market data <span class="badge new">16 real stocks · ~5–15 min</span></h3>
     <p class="sub"><b>Scenario: General Model Implementation.</b> Implement the MoE ranking architecture — feature encoder → temporal mixer → three experts (industry/sector, dynamic-KNN, global latent-factor tokens) combined by a regime router g₁,g₂,g₃ → cross-asset ranking/return forecast — then evaluate it on the bundled dataset: one year of <b>real public daily closes</b> for 16 US large-caps across 4 GICS-style sectors.</p>
     <button class="run" id="run-moe">▶ Run Stock-MoE ranking experiment</button>
-    <div class="note">Input: bundled spec <a href="/examples-assets/sample_stock_moe_experts.pdf" target="_blank">Stock-MoE spec + embedded dataset (view PDF)</a>. NumPy/SciPy/scikit-learn only, seed fixed, runtime &lt; 10 min. Reference result: routing turns individually-unprofitable experts into positive rank IC and long-short returns.</div>
+    <div class="note">Input: bundled spec <a href="/examples-assets/sample_stock_moe_experts.pdf" target="_blank">Stock-MoE spec + embedded dataset (view PDF)</a>. PyTorch (CPU) model built from scratch by the agent, seed fixed, runtime &lt; 15 min. Reference result: routing turns individually-unprofitable experts into positive rank IC and long-short returns.</div>
   </div>
 </div>
 

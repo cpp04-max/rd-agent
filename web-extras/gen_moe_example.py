@@ -1,6 +1,7 @@
 """Generates the bundled Stock-MoE example report (run with reportlab):
    python3 web-extras/gen_moe_example.py
 Produces sample_stock_moe_experts.pdf in web-extras/ (embeds stocks_sample.csv).
+Spec targets the CoSTEER PyTorch execution harness (model.py / model_cls / TimeSeries).
 """
 from pathlib import Path
 
@@ -14,86 +15,107 @@ HERE = Path(__file__).parent
 CSV = (HERE / "stocks_sample.csv").read_text().strip()
 
 SECTIONS: list[tuple[str, str]] = [
-    ("1. Objective",
-     "Implement the mixture-of-experts (MoE) cross-asset ranking architecture described below for next-day stock ranking, "
-     "and evaluate it on the real public dataset embedded in Appendix A: daily closing prices of 16 large-cap US stocks "
-     "across 4 GICS-style sectors (Technology, Financials, Healthcare, Energy), 256 trading days (source: Nasdaq public "
-     "quote API, Aug 2025 - Aug 2026). All code must be deterministic (seed 7), use only Python stdlib + NumPy/SciPy/"
-     "scikit-learn, require no network access, and finish in under 10 minutes."),
-    ("2. Architecture",
-     "The pipeline follows this diagram exactly:<br/><br/>"
+    ("1. Objective and model card",
+     "Implement a PyTorch mixture-of-experts (MoE) model for next-day cross-sectional stock ranking, and evaluate it on the "
+     "real public dataset embedded in Appendix A: daily closing prices of 16 large-cap US stocks across 4 sectors "
+     "(Technology, Financials, Healthcare, Energy), 256 trading days (source: Nasdaq public quote API, Aug 2025 - Aug 2026). "
+     "Model card for the research pipeline:<br/><br/>"
      "<font face='Courier' size='8'>"
-     "X[B,T,A,F] -&gt; Feature Encoder -&gt; Temporal Transformer/Mamba (mini) -&gt; H[B,T,A,D]<br/>"
-     "H -&gt; three parallel experts:<br/>"
-     "&nbsp;&nbsp;E1 Industry/Sector expert (same GICS hierarchy)&nbsp;&nbsp;"
-     "E2 Dynamic KNN expert (corr-based, learned KNN)&nbsp;&nbsp;"
-     "E3 Global Factor expert (latent market tokens)<br/>"
-     "(E1, E2, E3) + regime features -&gt; Regime Router gates g1,g2,g3 -&gt; cross-asset combined state -&gt; ranking / return forecast"
+     "model_name: StockMoEExpertsModel<br/>"
+     "model_type: TimeSeries<br/>"
+     "description: Cross-asset ranking model. Encodes a trailing window of the full stock cross-section, mixes it temporally "
+     "with a causal gated scan, and combines three experts - sector, dynamic-KNN and global-factor - through a regime router "
+     "into a single return forecast for a target stock.<br/>"
+     "hyperparameters: hidden_dim D = 16; num_sectors S = 4; knn_neighbors K = 3; num_factors = 3<br/>"
+     "training_hyperparameters: n_epochs = 30; lr = 1e-3; early_stop = 10; batch_size = 256; weight_decay = 1e-4"
+     "</font>"),
+    ("2. Integration contract (mandatory)",
+     "The deliverable is ONE Python file named model.py containing exactly one class subclassing torch.nn.Module and the "
+     "module-level assignment model_cls = StockMoEExpertsModel. The class must satisfy this execution contract, which the "
+     "automated runner applies verbatim:<br/><br/>"
+     "<font face='Courier' size='8'>"
+     "import torch<br/>"
+     "from model import model_cls<br/>"
+     "m = model_cls(num_features=10, num_timesteps=4)<br/>"
+     "for _, param in m.named_parameters():<br/>"
+     "&nbsp;&nbsp;&nbsp;&nbsp;param.data.fill_(1.0)<br/>"
+     "out = m(torch.full((32, 4, 10), 1.0))<br/>"
+     "assert out.shape == (32, 1) and torch.isfinite(out).all()"
      "</font><br/><br/>"
-     "Dimensions: T = 256 days, A = 16 assets, F = 6 features, D = 8 hidden dims, batch B = 1 handled as a single "
-     "walk-forward pass (process the whole panel once, causally). Target: next-1-day return y[t,a] = P[t+1,a]/P[t,a] - 1."),
-    ("3. Data &amp; splits (strictly causal)",
-     "Parse the Appendix A CSV: first column is Date, remaining headers are 'Sector:TICKER'. Build price matrix P (T x A). "
-     "Splits by time index: train rows 35 .. floor(0.6*T); router-validation rows floor(0.6*T) .. floor(0.8*T); "
-     "test rows floor(0.8*T) .. T-1 (last usable row, since the target needs t+1). All normalization/statistics must use "
-     "only data at or before time t (trailing or expanding windows). Never fit anything on the test split except evaluating."),
-    ("4. Feature bank &amp; Feature Encoder",
-     "Per (t,a) build F = 6 features from trailing prices/returns: (1) 1-day return; (2) 5-day cumulative return; "
-     "(3) 21-day momentum; (4) mean-reversion = -(P/MA21 - 1); (5) 21-day realized volatility (std of daily returns); "
-     "(6) 5-day realized volatility. Feature Encoder: per feature, causal trailing z-score using at most the last 120 rows "
-     "(mean/std over all assets in that window), then tanh compression, then a fixed projection into D = 8 dims via a "
-     "seeded Gaussian random matrix E in R^(F x D) scaled by 1/sqrt(F) (rng seed 7). Call the result Z[t,a] in R^D."),
-    ("5. Temporal Mixer (the 'Transformer/Mamba' block, mini)",
-     "Implement a Mamba-style gated state-space scan per asset: h_t = g * h_{t-1} + (1 - g) * Z_t with per-dimension gate "
-     "g in [0,1]^8 (parametrize g = sigmoid(theta)). Fit theta on the train split only by Nelder-Mead (maxiter &lt;= 400) "
-     "minimizing the reconstruction MSE of the encoded features (predict Z_t from h_t). H[B,T,A,D] is the stack of all h_t "
-     "per asset. This is the temporal-context block of the diagram."),
-    ("6. Expert 1 - Industry/Sector expert ('same GICS hierarchy')",
-     "One Ridge regression (alpha = 10) per sector, trained on train-split rows of that sector's assets only, mapping "
-     "h[t,a] -&gt; y[t,a]. Expert 1's forecast for asset a at time t is its own sector model's prediction."),
-    ("7. Expert 2 - Dynamic KNN expert ('corr / learned KNN')",
-     "A global Ridge (alpha = 10) mapping h -&gt; y trained once on all train rows. At each (t,a), compute trailing 60-day "
-     "return correlations between asset a and every other asset (causal window), rectify to max(corr, 0), take the top K = 3 "
-     "neighbors, normalize the weights, and output the weight-averaged global-model forecast of the neighbors. This makes "
-     "the expert dynamic: the effective predictor changes with the correlation structure."),
-    ("8. Expert 3 - Global Factor expert ('latent market tokens')",
-     "At each t, take the trailing (at most 120-row) returns matrix, center per column, compute its SVD and keep the top-3 "
-     "right singular vectors V in R^(3 x A) as latent market factor loadings (the 'latent market tokens'). For each asset a, "
-     "fit Ridge (alpha = 1) on train rows mapping V_t[:,a] -&gt; y[t,a]. Expert 3's forecast at t uses the factor vector "
-     "computed from data up to t only."),
-    ("9. Regime Router",
-     "Regime features phi_t in R^3: (1) market volatility = std over the trailing 21 days of the cross-sectional mean daily "
-     "return; (2) market momentum = trailing 21-day rolling mean of the cross-sectional mean daily return; "
-     "(3) cross-sectional dispersion = std across assets of daily returns at t. Z-score phi causally (trailing 120 rows). "
-     "Gates g(t) = softmax(phi_t W + b) in R^3 with W in R^(3 x 3), b in R^3 (12 parameters), fitted on the "
-     "router-validation split only, by Nelder-Mead (maxiter &lt;= 1500) minimizing MSE of the gated combination "
-     "sum_k g_k * Expert_k against realized next-day returns. Combined forecast: yhat[t,a] = sum_k g_k(t) * Expert_k(t,a)."),
-    ("10. Cross-asset state &amp; ranking output",
-     "On each test day, cross-sectionally rank the 16 assets by yhat (this is the cross-asset combined state producing the "
-     "ranking). Print the full ranking table for the last test day, plus the evaluation below."),
-    ("11. Evaluation protocol (test split)",
-     "For each test day report: Spearman rank IC between yhat and realized next returns; long-short daily return long top-3 / "
-     "short bottom-3. Aggregate: mean rank IC and mean L/S (in bps/day) for (a) the MoE router combination, (b) each expert "
-     "alone, (c) the equal-weight ensemble. Also print the mean router gates over the test split (sector/KNN/factor shares). "
-     "Discuss which expert the router relies on and why."),
-    ("12. Reference results (prototype on this exact dataset)",
-     "Our reference implementation achieves on the test split (~51 days): mean rank IC of the MoE router about +0.006 vs "
-     "equal-weight about -0.025 and single experts about -0.002 / -0.040 / -0.044 (sector/KNN/factor); mean L/S about +8 "
-     "bps/day for the router vs about -24 bps/day equal-weight; mean test gates roughly 0.18 sector / 0.71 KNN / 0.12 factor. "
-     "Individual numbers may differ slightly with implementation details; the key qualitative result is that no expert is "
-     "profitable alone while the learned regime routing turns the combination into positive IC and positive long-short "
-     "returns. Your implementation should aim to beat the equal-weight baseline."),
-    ("13. Constraints &amp; report format",
-     "Python 3 with NumPy/SciPy/scikit-learn only; no PyTorch/TensorFlow; no network; deterministic seed 7; runtime &lt; 10 "
-     "minutes; handle NaNs defensively (e.g., warm-up rows). Final report sections: Overview; Architecture Mapping (how each "
-     "diagram block was implemented); Data and Splits; Expert Analysis; Router and Regime Analysis; Evaluation table; "
-     "Limitations and next steps."),
+     "Consequences: (a) __init__(self, num_features, num_timesteps, **kwargs) - every other hyperparameter needs a default; "
+     "(b) forward receives a float tensor of shape (batch_size, num_timesteps, num_features) and must return shape "
+     "(batch_size, 1) - do NOT permute the input, timesteps are already axis 1; (c) after every nn.Parameter is overwritten "
+     "with 1.0 and the input is a constant all-ones batch, forward must stay finite - no division by parameters, no BatchNorm "
+     "(a constant batch has zero variance and produces NaN), prefer LayerNorm with eps or simple tanh/sigmoid gates; "
+     "(d) fixed constants (masks, decay factors) should be register_buffer since buffers are NOT overwritten; "
+     "(e) no side effects at import time (no file/network access, no dataset loading at module level), no try-except blocks, "
+     "no top-level main; (f) the real-data demo of Section 8 must live inside an if __name__ == '__main__': guard. "
+     "Only torch and the Python standard library may be imported."),
+    ("3. Input convention of this model",
+     "Each row of a batch predicts ONE target stock on ONE day. A sample x in R^(T x F) packs: columns 0 .. A-1 = trailing "
+     "T-day daily log-return cross-section of A stocks (identical across samples that share a date), column A (the last "
+     "column) = target indicator, constant along time with value target_idx / (A - 1). Hence F = A + 1, i.e. "
+     "num_features = A + 1. The model must work for ANY num_features &gt;= 2 and any num_timesteps: treat the last column as "
+     "the target indicator, the remaining A' = num_features - 1 columns as the cross-section, and recover the target index as "
+     "idx = clamp(round(x[:, -1, -1] * (A' - 1)), 0, A' - 1).long(). Under the acceptance test above, A' = 9 and idx = 8, "
+     "which is valid."),
+    ("4. Architecture",
+     "The model follows this diagram:<br/><br/>"
+     "<font face='Courier' size='8'>"
+     "x[B,T,F] -&gt; Feature Encoder -&gt; Temporal gated scan -&gt; H[B,T,D]<br/>"
+     "H + x -&gt; three parallel experts E1 sector / E2 dynamic-KNN / E3 global-factor<br/>"
+     "(E1, E2, E3) + regime features -&gt; Regime Router gates g1,g2,g3 -&gt; y = head(sum g_k E_k), shape (B, 1)"
+     "</font><br/><br/>"
+     "Feature Encoder (causal): z_t = tanh(LayerNorm_eps(x_t) W_e + b_e), W_e in R^(F x D), D = 16. Per-timestep, hence causal. "
+     "Temporal mixer (Mamba-style gated scan, causal): h_0 = 0, g_t = sigmoid(z_t W_g + b_g) in [0,1]^D, "
+     "h_t = g_t * h_{t-1} + (1 - g_t) * z_t. H = stack(h_1 .. h_T).<br/><br/>"
+     "Expert 1 - Sector: split the A' cross-section columns into S = min(4, A') consecutive blocks (a stand-in for the GICS "
+     "hierarchy; in the demo data columns are already ordered by sector). Compute per-block means over the last min(3, T) "
+     "timesteps -> s in R^S. Target block ts = idx // ceil(A'/S), clamped. E1 = Linear(2S -&gt; 1)(concat(s, s * onehot(ts))).<br/><br/>"
+     "Expert 2 - Dynamic KNN: gather the target series xs = x[:, :, idx]. Compute trailing Pearson correlation of xs with every "
+     "other column over the window T (cov / (std_i * std_j + eps)), tanh-compress, keep top K = min(3, A'-1) with softmax "
+     "weights w. E2 = Linear(1 -&gt; 1)(sum_j w_j * x[:, -1, j]) - a correlation-weighted readout of the neighbors' most recent "
+     "moves, so the effective predictor tracks the changing correlation structure.<br/><br/>"
+     "Expert 3 - Global factor: M = x[:, :, :A'] centered over the time axis; torch.linalg.svd(M) -> keep top-3 singular "
+     "values s3 (B,3) and right vectors V3 (B, A', 3); target loading l = V3[range(B), idx, :3]; "
+     "E3 = Linear(3 -&gt; 1)(l * (s3 / (s3.max + eps))).<br/><br/>"
+     "Regime Router: regime features phi in R^3 computed from x (data-driven, no parameters): realized vol of the cross-section "
+     "mean series, trailing momentum (window mean of the cross-section mean), cross-sectional dispersion at the last timestep; "
+     "z-score each within the window with eps. Gates g = softmax(phi W_r + b_r) in R^3. Output head: y = Linear(1 -&gt; 1)"
+     "(g1*E1 + g2*E2 + g3*E3), returned as (B, 1)."),
+    ("5. Stability requirements",
+     "Every denominator gets + eps (1e-6). torch.linalg.svd must receive the centered matrix of a constant batch without NaN: "
+     "centering makes it exactly zero, which is fine. All gather/scatter indices are clamped to valid ranges. No BatchNorm1d/2d. "
+     "The model must produce a finite (B,1) tensor for the all-ones, all-parameters-1.0 acceptance test of Section 2."),
+    ("6. Data and splits (demo, strictly causal)",
+     "Parse the Appendix A CSV: first column Date, remaining headers 'Sector:TICKER' (16 columns). Build price matrix "
+     "P (256 x 16) and daily log returns R. Window length T_win = 20; horizon 1 day: target y[t, a] = R[t+1, a]. Samples: for "
+     "every usable date t and stock a, x packs R[t-T_win+1 .. t, :] plus target indicator a/(16-1). Split by date: first 60% "
+     "train, next 20% validation, last 20% test. All statistics causal. Nothing is fitted on test except evaluation."),
+    ("7. Training",
+     "torch.manual_seed(7). Adam, lr = 1e-3, weight_decay = 1e-4, batch_size = 256, at most n_epochs = 30 with early stopping "
+     "(patience 10) on validation MSE of the next-day target return. CPU only, no network, total runtime under 10 minutes."),
+    ("8. Evaluation protocol (inside the __main__ guard)",
+     "Embed the Appendix A CSV as a string constant INSIDE the __main__ guard of model.py (the file is still importable "
+     "side-effect-free). On the test split report per date the Spearman rank IC between predicted and realized next-day returns, "
+     "averaged over dates, and the long-short return (mean of top-3 minus bottom-3 predicted stocks per date, bps/day). Also "
+     "report ablations with the router gates fixed: expert-1-only, expert-2-only, expert-3-only, and equal-weight 1/3 each. "
+     "Print a small results table."),
+    ("9. Reference results (feasibility baseline, NumPy prototype, seed 7)",
+     "A closed-form NumPy prototype of this exact architecture on this dataset achieved on the 51 test days: rank IC "
+     "MoE +0.0062 vs equal-weight -0.0252 vs experts alone -0.0015 / -0.0396 / -0.0441; long-short +8.12 bps/day vs -23.51 "
+     "for equal weight; learned gates [0.18, 0.71, 0.12] (sector / KNN / factor). A torch implementation with a short training "
+     "loop should reach comparable or better rank IC; matching the sign and relative ordering is sufficient for this sample."),
+    ("10. Constraints and report format",
+     "Deterministic (seed 7), torch + stdlib only, no network, runtime &lt; 10 min. The final report should restate the "
+     "architecture, the acceptance-test result, the results table of Section 8, and one paragraph of analysis of the learned "
+     "router gates."),
 ]
 
 
 def build():
     styles = getSampleStyleSheet()
-    h1 = ParagraphStyle("h1x", parent=styles["Title"], fontSize=14, leading=17, spaceAfter=2)
+    h1 = ParagraphStyle("h1x", parent=styles["Title"], fontSize=13, leading=16, spaceAfter=2)
     h2 = ParagraphStyle("h2x", parent=styles["Normal"], fontSize=9.5, textColor="#444444", spaceAfter=8)
     hs = ParagraphStyle("hsx", parent=styles["Heading2"], fontSize=11, spaceBefore=8, spaceAfter=3)
     body = ParagraphStyle("bodyx", parent=styles["Normal"], fontSize=9.5, leading=13.2)
@@ -112,7 +134,7 @@ def build():
             h1,
         ),
         Paragraph(
-            "Model Research Report (Sample spec) &mdash; mini implementation of the MoE ranking architecture; "
+            "Model Research Report (Sample spec, PyTorch) &mdash; model_type: TimeSeries; "
             "dataset: real public US large-cap daily closes, 16 assets / 4 sectors / 256 trading days",
             h2,
         ),
@@ -122,8 +144,8 @@ def build():
     story += [Paragraph("Appendix A - Embedded dataset (CSV, parse this text)", hs)]
     story += [
         Paragraph(
-            "Columns are 'Sector:TICKER'. If parsing this appendix fails, you may instead download nothing and must error out "
-            "gracefully - do not fetch data from the network.",
+            "Columns are 'Sector:TICKER'. Embed this CSV as a string constant inside the __main__ guard of model.py and parse "
+            "it there. No network access is allowed anywhere.",
             body,
         )
     ]
