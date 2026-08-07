@@ -209,13 +209,13 @@ function monitor(id){
   document.getElementById("monitor").scrollIntoView({behavior:"smooth"});
 }
 async function launch(fd,btn){
-  btn.disabled=true; btn.textContent="Starting…";
+  if(btn){btn.disabled=true; btn.textContent="Starting…";}
   try{
     const r=await fetch("/upload",{method:"POST",body:fd});
     const j=await r.json();
     if(j&&j.id){monitor(j.id);}else{alert("Failed to start: "+JSON.stringify(j));}
   }catch(e){alert("Request failed: "+e);}
-  btn.disabled=false; btn.textContent=btn.dataset.label;
+  if(btn){btn.disabled=false; btn.textContent=btn.dataset.label;}
 }
 document.querySelectorAll("button.run").forEach(b=>b.dataset.label=b.textContent);
 
@@ -224,46 +224,53 @@ async function bundledPdf(name){
   return new File([blob],name,{type:"application/pdf"});
 }
 document.getElementById("run-vol").onclick=async e=>{
+  const btn=e.currentTarget;
   const fd=new FormData();
   fd.append("scenario","General Model Implementation");
   fd.append("files",await bundledPdf("sample_quant_model.pdf"));
-  launch(fd,e.currentTarget);
+  launch(fd,btn);
 };
 document.getElementById("run-gm").onclick=async e=>{
+  const btn=e.currentTarget;
   const fd=new FormData();
   fd.append("scenario","General Model Implementation");
   fd.append("files",await bundledPdf("sample_model_report.pdf"));
-  launch(fd,e.currentTarget);
+  launch(fd,btn);
 };
 document.getElementById("run-pa").onclick=async e=>{
+  const btn=e.currentTarget;
   const fd=new FormData();
   fd.append("scenario","General Model Implementation");
   fd.append("files",await bundledPdf("sample_prime_attention.pdf"));
-  launch(fd,e.currentTarget);
+  launch(fd,btn);
 };
 document.getElementById("run-chatsfm").onclick=async e=>{
+  const btn=e.currentTarget;
   const fd=new FormData();
   fd.append("scenario","General Model Implementation");
   fd.append("files",await bundledPdf("sample_chatsfm.pdf"));
-  launch(fd,e.currentTarget);
+  launch(fd,btn);
 };
 document.getElementById("run-fr").onclick=async e=>{
+  const btn=e.currentTarget;
   const fd=new FormData();
   fd.append("scenario","Finance Data Building (Reports)");
   fd.append("files",await bundledPdf("sample_factor_report.pdf"));
-  launch(fd,e.currentTarget);
+  launch(fd,btn);
 };
 document.getElementById("run-ff").onclick=e=>{
+  const btn=e.currentTarget;
   const fd=new FormData();
   fd.append("scenario","Finance Data Building");
   fd.append("loops",document.getElementById("ff-loops").value||"1");
-  launch(fd,e.currentTarget);
+  launch(fd,btn);
 };
 document.getElementById("run-fq").onclick=e=>{
+  const btn=e.currentTarget;
   const fd=new FormData();
   fd.append("scenario","Finance Whole Pipeline");
   fd.append("loops",document.getElementById("fq-loops").value||"1");
-  launch(fd,e.currentTarget);
+  launch(fd,btn);
 };
 const COMPS=["titanic","jane-street-market-prediction","amex-default-prediction","optiver-realized-volatility-prediction"];
 const cwrap=document.getElementById("comps");
@@ -275,13 +282,14 @@ COMPS.forEach(c=>{
   cwrap.appendChild(b);
 });
 document.getElementById("run-ds").onclick=e=>{
+  const btn=e.currentTarget;
   const comp=document.getElementById("ds-comp").value.trim();
   if(!comp)return alert("Enter a competition name");
   const fd=new FormData();
   fd.append("scenario","Data Science");
   fd.append("competition","MLE-Bench:"+comp);
   const l=document.getElementById("ds-loops").value; if(l)fd.append("loops",l);
-  launch(fd,e.currentTarget);
+  launch(fd,btn);
 };
 </script>
 </body>
