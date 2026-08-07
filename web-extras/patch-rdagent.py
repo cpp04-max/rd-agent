@@ -303,4 +303,45 @@ def progress_tail():
     "P8 /progress stdout tail endpoint",
 )
 
+
+# ---------------------------------------------------------------- P9
+# After a server restart, traces are reloaded from disk without a live task,
+# so `task.stdout_path` is empty and /progress + /stdout would return nothing.
+# Fall back to the on-disk layout used by /upload: <trace_folder>/<scenario>/<trace_name>.log
+patch(
+    "rdagent/log/server/app.py",
+    "    task = rdagent_processes.get(str(log_folder_path / normalized_trace_id))\n"
+    "    if task is None or not task.stdout_path:\n"
+    "        return None\n"
+    "\n"
+    "    stdout_path = Path(task.stdout_path).resolve()",
+    "    task = rdagent_processes.get(str(log_folder_path / normalized_trace_id))\n"
+    "    stdout_path = None\n"
+    "    if task is not None and task.stdout_path:\n"
+    "        stdout_path = Path(task.stdout_path)\n"
+    "    else:\n"
+    "        # Traces reloaded from disk after a restart have no live task;\n"
+    "        # /upload persists stdout at <trace_folder>/<scenario>/<trace_name>.log.\n"
+    "        _trace_dir = log_folder_path / normalized_trace_id\n"
+    "        _candidate = _trace_dir.parent / (_trace_dir.name + \".log\")\n"
+    "        if _candidate.exists():\n"
+    "            stdout_path = _candidate\n"
+    "    if stdout_path is None:\n"
+    "        return None\n"
+    "\n"
+    "    stdout_path = stdout_path.resolve()",
+    "P9 stdout path fallback for traces reloaded from disk",
+)
+
+
+# ---------------------------------------------------------------- P10
+# Line-buffer the redirected stdout so the live activity panel sees output
+# immediately instead of waiting for an 8KB buffer to fill.
+patch(
+    "rdagent/log/server/app.py",
+    '        with open(self.stdout_path, "w") as log_file:',
+    '        with open(self.stdout_path, "w", buffering=1) as log_file:',
+    "P10 line-buffered run stdout",
+)
+
 print("All rdagent patches applied.", flush=True)

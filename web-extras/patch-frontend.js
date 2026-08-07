@@ -136,6 +136,7 @@ const activityCode =
   "const activityLogEl = ref(null);\n" +
   "let activityOffset = 0;\n" +
   "let activityTimer = null;\n" +
+  "let activityLastTraceId = \"\";\n" +
   "\n" +
   "const activityPhaseFromLine = (line) => {\n" +
   "  const t = String(line || \"\");\n" +
@@ -156,7 +157,17 @@ const activityCode =
   "    activityTimer = null;\n" +
   "  }\n" +
   "  const activityTraceId = String(props.id || \"\").trim();\n" +
-  "  if (!activityTraceId) return;\n" +
+  "  if (!activityTraceId) {\n" +
+  "    activityTimer = setTimeout(progressPoll, 3000);\n" +
+  "    return;\n" +
+  "  }\n" +
+  "  if (activityTraceId !== activityLastTraceId) {\n" +
+  "    activityLastTraceId = activityTraceId;\n" +
+  "    activityText.value = \"\";\n" +
+  "    activityOffset = 0;\n" +
+  "    activityRunning.value = true;\n" +
+  "    activityPhase.value = \"starting…\";\n" +
+  "  }\n" +
   "  fetch(`/progress?id=${encodeURIComponent(activityTraceId)}&offset=${activityOffset}`)\n" +
   "    .then((r) => (r.ok ? r.json() : null))\n" +
   "    .then((j) => {\n" +
@@ -179,7 +190,7 @@ const activityCode =
   "      }\n" +
   "      if (j.alive === false) {\n" +
   "        activityRunning.value = false;\n" +
-  "        if (!activityText.value) activityPhase.value = \"run finished\";\n" +
+  "        if (!activityText.value) activityPhase.value = \"run finished (no captured output)\";\n" +
   "        return;\n" +
   "      }\n" +
   "      activityRunning.value = true;\n" +

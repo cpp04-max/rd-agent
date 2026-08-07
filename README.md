@@ -72,6 +72,7 @@ Designed for quant researchers, with one-click runs:
 Each run streams live progress on the page and appears in the dashboard history.
 
 Inside the dashboard, a **Live activity** panel streams the run's stdout in real time (a "thinking flow": hypothesis generation, code evolution, experiment runs, feedback), with a one-line phase summary; it can be collapsed.
+It also works for past runs reopened after a redeploy (stdout is read from the persisted trace log), and resets automatically when switching traces.
 
 ## Access control (invitation links)
 
