@@ -71,6 +71,8 @@ Designed for quant researchers, with one-click runs:
 
 Each run streams live progress on the page and appears in the dashboard history.
 
+Inside the dashboard, a **Live activity** panel streams the run's stdout in real time (a "thinking flow": hypothesis generation, code evolution, experiment runs, feedback), with a one-line phase summary; it can be collapsed.
+
 ## Access control (invitation links)
 
 The app is wrapped with an invitation gate (`gate/gate.py`):
