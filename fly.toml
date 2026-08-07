@@ -25,6 +25,7 @@ primary_region = 'lax'
   # Persist invites + run history on the rdagentdata volume
   INVITE_STORE = "/data/invites.json"
   UI_TRACE_FOLDER = "/data/traces"
+  RDAGENT_QLIB_UNIVERSE = "csi300"
 
 [mounts]
   source = "rdagentdata"
@@ -33,4 +34,4 @@ primary_region = 'lax'
 [[vm]]
   cpu_kind = 'shared'
   cpus = 1
-  memory_mb = 1024
+  memory_mb = 2048

@@ -19,11 +19,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl \
 RUN pip install uv
 
 RUN git clone --depth 1 https://github.com/microsoft/RD-Agent.git /app/RD-Agent
+# Finance scenarios run inside this container (no conda/docker): patch env selection,
+# qlib data provisioning and memory limits before the package is installed.
+COPY web-extras/patch-rdagent.py /tmp/patch-rdagent.py
+RUN python3 /tmp/patch-rdagent.py /app/RD-Agent
 WORKDIR /app/RD-Agent
 
 # Install rdagent + all runtime deps (uses uv for speed/reliability)
 RUN uv pip install --system -r requirements.txt \
  && uv pip install --system --no-deps .
+
+# Finance (qlib) scenarios: qlib + mlflow + lightgbm + deps
+RUN uv pip install --system pyqlib
 
 # Built Vue frontend served by the Flask log server
 COPY --from=frontend /src/git_ignore_folder/static /app/RD-Agent/git_ignore_folder/static
@@ -37,6 +44,8 @@ RUN python3 -c "import pathlib; p=pathlib.Path('git_ignore_folder/static/index.h
 
 # Workspace, traces and logs live in git_ignore_folder/ and log/ — mount volumes to persist
 RUN mkdir -p git_ignore_folder/static git_ignore_folder/traces log
+# qlib market data persists on the /data volume (survives redeploys)
+RUN ln -s /data/qlib /root/.qlib
 
 EXPOSE 19899
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \

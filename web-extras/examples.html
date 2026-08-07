@@ -94,7 +94,7 @@ code{background:#eef1f6;border-radius:4px;padding:1px 5px;font-size:12px}
     <label>Loops</label>
     <input type="number" id="ff-loops" min="1" value="1">
     <button class="run" id="run-ff">▶ Start factor exploration</button>
-    <div class="note">First run auto-provisions qlib and its market data (~1 GB download) — expect a slow start on the 1 GB machine. Prefer loops = 1 for a first run.</div>
+    <div class="note">First run downloads qlib CN market data (~200 MB, persisted on the volume) and builds the factor dataset — expect a slow start. Prefer loops = 1 for a first run.</div>
   </div>
   <div class="card">
     <h3>Implement a factor from a research report <span class="badge new">quant report → factor</span></h3>

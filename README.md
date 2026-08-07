@@ -95,8 +95,15 @@ flyctl secrets set --app rd-agent ADMIN_MASTER_KEY=so…cret
 - **Code execution**: generated code runs inside the container's own Python
   (`*_env_type=conda`, no extra setup). For containerised execution, mount the Docker
   socket and switch both env vars to `docker`.
-- **First finance run** provisions a qlib conda environment and can take a while.
-- **Persistence**: `fly.toml` mounts the `rdagentdata` volume at `/data` for invites and
-  traces; create it once with `flyctl volumes create rdagentdata --region lax`.
+- **Finance scenarios** run in the container's own Python (build-time patches in
+  `web-extras/patch-rdagent.py` replace upstream's conda/Docker env selection). The image
+  ships qlib/mlflow/lightgbm via `pyqlib`. The first finance run downloads qlib CN market
+  data (~200 MB) to the `/data` volume and builds the factor dataset — expect a slow start.
+  Factor development/backtesting is scoped to the CSI300 universe (`RDAGENT_QLIB_UNIVERSE`).
+- **Persistence**: `fly.toml` mounts the `rdagentdata` volume at `/data` for invites,
+  traces and qlib market data; create it once with
+  `flyctl volumes create rdagentdata --region lax`.
+- **Machine size**: finance runs need the 2 GB memory setting in `fly.toml` (qlib dataset
+  construction).
 - Models: defaults to `qwen3-max`; any DashScope model works via the OpenAI-compatible
   endpoint (e.g. `openai/qwen-plus`, `openai/qwen3-coder-plus`).
