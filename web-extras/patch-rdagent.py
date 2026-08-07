@@ -146,6 +146,38 @@ patch(
     "P5 limit universe",
 )
 
+# ---------------------------------------------------------------- P5b
+old = (
+    "data = (\n"
+    "    (\n"
+    '        D.features(instruments, fields, start_time="2018-01-01", end_time="2019-12-31", freq="day")\n'
+    "        .swaplevel()\n"
+    "        .sort_index()\n"
+    "    )\n"
+    "    .swaplevel()\n"
+    '    .loc[data.reset_index()["instrument"].unique()[:100]]\n'
+    "    .swaplevel()\n"
+    "    .sort_index()\n"
+    ")"
+)
+new = (
+    "_debug = (\n"
+    '    D.features(instruments, fields, start_time="2018-01-01", end_time="2019-12-31", freq="day")\n'
+    "    .swaplevel()\n"
+    "    .sort_index()\n"
+    ")\n"
+    "_debug = _debug.swaplevel()\n"
+    '_present = set(_debug.reset_index()["instrument"].unique())\n'
+    '_pick = [i for i in data.reset_index()["instrument"].unique() if i in _present][:100]\n'
+    "data = _debug.loc[_pick].swaplevel().sort_index()"
+)
+patch(
+    "rdagent/scenarios/qlib/experiment/factor_data_template/generate.py",
+    old,
+    new,
+    "P5b debug-block intersection",
+)
+
 # ---------------------------------------------------------------- P6
 patch(
     "rdagent/log/server/app.py",
