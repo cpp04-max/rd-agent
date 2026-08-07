@@ -128,6 +128,22 @@ code{background:#eef1f6;border-radius:4px;padding:1px 5px;font-size:12px}
   </div>
 </div>
 
+<h2 class="sec">④ Paper playground — play with recent research</h2>
+<div class="grid">
+  <div class="card">
+    <h3>Prime Attention: per-pair modulated attention for MTS <span class="badge new">arXiv 2509.12196 · ~5–15 min</span></h3>
+    <p class="sub"><b>Scenario: General Model Implementation.</b> A simplified, CPU-runnable reproduction of <i>Dynamic Relational Priming Improves Transformer in Multivariate Time Series</i> (Lee &amp; Clark): keys/values are modulated by a pair-specific “primer” built from FFT lead-lag cross-correlations, then compared head-to-head with standard attention on synthetic data with heterogeneous channel relationships.</p>
+    <button class="run" id="run-pa">▶ Reproduce Prime Attention (mini)</button>
+    <div class="note">Input: bundled spec <a href="/examples-assets/sample_prime_attention.pdf" target="_blank">Prime Attention mini (view PDF)</a>. NumPy/scikit-learn only, seeds fixed, runtime &lt; 2 min. Watch the dashboard to see the agent implement, run and iterate on it.</div>
+  </div>
+  <div class="card">
+    <h3>ChaTSFM: channel adapter for frozen TS foundation models <span class="badge new">ICML 2026 · ~5–15 min</span></h3>
+    <p class="sub"><b>Scenario: General Model Implementation.</b> A simplified reproduction of <i>Channel Adapter for Time Series Foundation Models in Zero-Shot Multivariate Forecasting</i> (Li et al.): a frozen channel-independent backbone plus a tiny (8-parameter) adapter — descriptor-conditioned channel similarity + gated sparse blending — pre-trained on a budgeted synthetic corpus and evaluated zero-shot.</p>
+    <button class="run" id="run-chatsfm">▶ Reproduce ChaTSFM (mini)</button>
+    <div class="note">Input: bundled spec <a href="/examples-assets/sample_chatsfm.pdf" target="_blank">ChaTSFM mini (view PDF)</a>. NumPy/SciPy only, seeds fixed, runtime &lt; 3 min.</div>
+  </div>
+</div>
+
 <div class="card" id="monitor">
   <h3>Live run: <span id="mon-id"></span> · <a id="mon-dash" href="/#/Playground">open in dashboard ↗</a></h3>
   <ul id="steps"></ul>
@@ -217,6 +233,18 @@ document.getElementById("run-gm").onclick=async e=>{
   const fd=new FormData();
   fd.append("scenario","General Model Implementation");
   fd.append("files",await bundledPdf("sample_model_report.pdf"));
+  launch(fd,e.currentTarget);
+};
+document.getElementById("run-pa").onclick=async e=>{
+  const fd=new FormData();
+  fd.append("scenario","General Model Implementation");
+  fd.append("files",await bundledPdf("sample_prime_attention.pdf"));
+  launch(fd,e.currentTarget);
+};
+document.getElementById("run-chatsfm").onclick=async e=>{
+  const fd=new FormData();
+  fd.append("scenario","General Model Implementation");
+  fd.append("files",await bundledPdf("sample_chatsfm.pdf"));
   launch(fd,e.currentTarget);
 };
 document.getElementById("run-fr").onclick=async e=>{

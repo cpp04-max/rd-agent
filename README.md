@@ -66,6 +66,8 @@ Designed for quant researchers, with one-click runs:
 4. **Implement a factor from a research report** — bundled VWMOM factor report (Finance Data Building (Reports))
 5. **Whole quant pipeline** — factors → model → strategy (Finance Whole Pipeline)
 6. **Data Interpreter on a Kaggle task** — finance competition shortcuts; needs Kaggle credentials secrets
+7. **Paper playground: Prime Attention (mini)** — reproduce a simplified version of the pair-modulated attention MTS paper (arXiv 2509.12196)
+8. **Paper playground: ChaTSFM (mini)** — reproduce a simplified channel adapter for frozen time-series foundation models (ICML 2026)
 
 Each run streams live progress on the page and appears in the dashboard history.
 
