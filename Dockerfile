@@ -5,6 +5,9 @@
 FROM node:22-alpine AS frontend
 RUN apk add --no-cache git
 RUN git clone --depth 1 https://github.com/microsoft/RD-Agent.git /src
+# Deep-link support: /#/Playground?trace=<id> opens a specific run in the dashboard
+COPY web-extras/patch-frontend.js /tmp/patch-frontend.js
+RUN node /tmp/patch-frontend.js
 WORKDIR /src/web
 RUN npm install --legacy-peer-deps --no-audit --no-fund \
  && npm run build:flask           # outputs to /src/git_ignore_folder/static

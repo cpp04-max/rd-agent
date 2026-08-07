@@ -56,8 +56,8 @@ code{background:#eef1f6;border-radius:4px;padding:1px 5px;font-size:12px}
 <header>
  <div class="wrap">
   <h1>RD-Agent — Quant Research Workbench</h1>
-  <p>An autonomous research &amp; development agent for quant work: it turns model ideas, factor hypotheses and research reports into <b>running, backtested code</b>. Pick an example below and watch the full loop live — then open any run in the <a href="/">dashboard</a>.</p>
-  <div class="links"><a href="/">📊 Dashboard</a><a href="/admin">🔑 Invite admin</a></div>
+  <p>An autonomous research &amp; development agent for quant work: it turns model ideas, factor hypotheses and research reports into <b>running, backtested code</b>. Pick an example below and watch the full loop live — then open any run in the <a href="/#/Playground">dashboard</a>.</p>
+  <div class="links"><a href="/#/Playground">📊 Dashboard</a><a href="/admin">🔑 Invite admin</a></div>
  </div>
 </header>
 <div class="flow"><div class="wrap">
@@ -68,7 +68,7 @@ code{background:#eef1f6;border-radius:4px;padding:1px 5px;font-size:12px}
 </div></div>
 
 <main>
-<div id="banner"><div class="inner">💡 Runs appear in the <a href="/">dashboard</a> history once they produce results. A run that stops immediately with <b>“config: null”</b> means the LLM backend is not configured — the admin should set the DashScope secrets (<code>OPENAI_API_KEY</code>, <code>CHAT_MODEL</code>, <code>OPENAI_API_BASE</code>) in Fly.</div></div>
+<div id="banner"><div class="inner">💡 Runs appear in the <a href="/#/Playground">dashboard</a> history once they produce results. A run that stops immediately with <b>“config: null”</b> means the LLM backend is not configured — the admin should set the DashScope secrets (<code>OPENAI_API_KEY</code>, <code>CHAT_MODEL</code>, <code>OPENAI_API_BASE</code>) in Fly.</div></div>
 
 <h2 class="sec">① Zero-setup demos — one click, bundled inputs</h2>
 <div class="grid">
@@ -128,7 +128,7 @@ code{background:#eef1f6;border-radius:4px;padding:1px 5px;font-size:12px}
 </div>
 
 <div class="card" id="monitor">
-  <h3>Live run: <span id="mon-id"></span> · <a href="/">open in dashboard ↗</a></h3>
+  <h3>Live run: <span id="mon-id"></span> · <a id="mon-dash" href="/#/Playground">open in dashboard ↗</a></h3>
   <ul id="steps"></ul>
 </div>
 </main>
@@ -183,6 +183,7 @@ function monitor(id){
   traceId=id;
   document.getElementById("monitor").style.display="block";
   document.getElementById("mon-id").textContent=id;
+  document.getElementById("mon-dash").href="/#/Playground?trace="+encodeURIComponent(id);
   document.getElementById("steps").innerHTML="";
   const li=document.createElement("li");li.innerHTML='<span class="t"></span><span>🚀 Scenario launched — waiting for first agent output…</span>';
   document.getElementById("steps").appendChild(li);
