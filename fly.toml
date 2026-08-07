@@ -1,23 +1,27 @@
-app = "rd-agent"
-primary_region = "lax"
+# fly.toml app configuration file generated for rd-agent on 2026-08-07T14:46:02Z
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'rd-agent'
+primary_region = 'lax'
 
 [build]
 
 [http_service]
   internal_port = 19899
   force_https = true
-  # RD-Agent scenarios are long-running background processes — never auto-stop
-  auto_stop_machines = false
+  auto_stop_machines = 'off'
   min_machines_running = 0
 
   [[http_service.checks]]
-    interval = "30s"
-    timeout = "10s"
-    grace_period = "60s"
-    method = "GET"
-    path = "/test"
+    interval = '30s'
+    timeout = '10s'
+    grace_period = '1m0s'
+    method = 'GET'
+    path = '/test'
 
 [[vm]]
-  cpu_kind = "shared"
+  cpu_kind = 'shared'
   cpus = 1
   memory_mb = 1024
