@@ -27,7 +27,7 @@ primary_region = 'lax'
   UI_TRACE_FOLDER = "/data/traces"
 
 [mounts]
-  source = "rdagent_data"
+  source = "rdagentdata"
   destination = "/data"
 
 [[vm]]
