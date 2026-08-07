@@ -42,6 +42,7 @@ COPY web-extras/sample_quant_model.pdf git_ignore_folder/static/examples-assets/
 COPY web-extras/sample_factor_report.pdf git_ignore_folder/static/examples-assets/sample_factor_report.pdf
 COPY web-extras/sample_prime_attention.pdf git_ignore_folder/static/examples-assets/sample_prime_attention.pdf
 COPY web-extras/sample_chatsfm.pdf git_ignore_folder/static/examples-assets/sample_chatsfm.pdf
+COPY web-extras/sample_stock_moe_experts.pdf git_ignore_folder/static/examples-assets/sample_stock_moe_experts.pdf
 RUN python3 -c "import pathlib; p=pathlib.Path('git_ignore_folder/static/index.html'); s=p.read_text(); s=s.replace('</body>', '<a href=\"/examples.html\" style=\"position:fixed;right:18px;bottom:18px;z-index:9999;background:#1677ff;color:#fff;padding:10px 16px;border-radius:24px;font:600 14px/1 system-ui,sans-serif;text-decoration:none;box-shadow:0 4px 14px rgba(22,119,255,.4)\">Quickstart Examples</a></body>'); p.write_text(s)"
 
 # Workspace, traces and logs live in git_ignore_folder/ and log/ — mount volumes to persist

@@ -144,6 +144,16 @@ code{background:#eef1f6;border-radius:4px;padding:1px 5px;font-size:12px}
   </div>
 </div>
 
+<h2 class="sec">⑤ Architecture lab — build &amp; test a custom quant architecture</h2>
+<div class="grid">
+  <div class="card">
+    <h3>Stock-ranking Mixture-of-Experts on real market data <span class="badge new">16 real stocks · ~5–15 min</span></h3>
+    <p class="sub"><b>Scenario: General Model Implementation.</b> Implement the MoE ranking architecture — feature encoder → temporal mixer → three experts (industry/sector, dynamic-KNN, global latent-factor tokens) combined by a regime router g₁,g₂,g₃ → cross-asset ranking/return forecast — then evaluate it on the bundled dataset: one year of <b>real public daily closes</b> for 16 US large-caps across 4 GICS-style sectors.</p>
+    <button class="run" id="run-moe">▶ Run Stock-MoE ranking experiment</button>
+    <div class="note">Input: bundled spec <a href="/examples-assets/sample_stock_moe_experts.pdf" target="_blank">Stock-MoE spec + embedded dataset (view PDF)</a>. NumPy/SciPy/scikit-learn only, seed fixed, runtime &lt; 10 min. Reference result: routing turns individually-unprofitable experts into positive rank IC and long-short returns.</div>
+  </div>
+</div>
+
 <div class="card" id="monitor">
   <h3>Live run: <span id="mon-id"></span> · <a id="mon-dash" href="/#/Playground">open in dashboard ↗</a></h3>
   <ul id="steps"></ul>
@@ -242,6 +252,13 @@ document.getElementById("run-pa").onclick=async e=>{
   const fd=new FormData();
   fd.append("scenario","General Model Implementation");
   fd.append("files",await bundledPdf("sample_prime_attention.pdf"));
+  launch(fd,btn);
+};
+document.getElementById("run-moe").onclick=async e=>{
+  const btn=e.currentTarget;
+  const fd=new FormData();
+  fd.append("scenario","General Model Implementation");
+  fd.append("files",await bundledPdf("sample_stock_moe_experts.pdf"));
   launch(fd,btn);
 };
 document.getElementById("run-chatsfm").onclick=async e=>{

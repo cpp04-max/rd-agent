@@ -68,6 +68,7 @@ Designed for quant researchers, with one-click runs:
 6. **Data Interpreter on a Kaggle task** — finance competition shortcuts; needs Kaggle credentials secrets
 7. **Paper playground: Prime Attention (mini)** — reproduce a simplified version of the pair-modulated attention MTS paper (arXiv 2509.12196)
 8. **Paper playground: ChaTSFM (mini)** — reproduce a simplified channel adapter for frozen time-series foundation models (ICML 2026)
+9. **Architecture lab: Stock-ranking Mixture-of-Experts** — implement sector/dynamic-KNN/global-factor experts with a regime router, evaluated on one year of real public US large-cap daily closes (16 assets / 4 sectors, bundled in the spec PDF)
 
 Each run streams live progress on the page and appears in the dashboard history.
 
