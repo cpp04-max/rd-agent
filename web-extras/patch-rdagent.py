@@ -2,23 +2,29 @@
 
 Upstream RD-Agent assumes it runs inside a conda environment (and Docker for the
 factor source-data generation). This container is plain CPython, so without these
-patches every finance scenario crashes during scenario construction with a pydantic
-ValidationError (CondaConf(conda_env_name=None)) or a docker error, before any
-hypothesis is generated -- the dashboard then shows:
-"No hypothesis generated due to some errors happened in previous steps."
+patches every finance scenario crashes during scenario construction -- the dashboard
+then shows: "No hypothesis generated due to some errors happened in previous steps."
 
 Patches (all strict-match; build fails loudly if upstream drifts):
-  P1 factor_coder/config.py   get_factor_env: conda -> local fallback
-  P2 model_coder/conf.py      get_model_env:  conda -> local fallback
+  P1 factor_coder/config.py        get_factor_env: conda -> local fallback
+  P2 model_coder/conf.py           get_model_env:  conda -> local fallback
   P3 qlib/experiment/workspace.py  QlibFBWorkspace.execute: conda -> local fallback
-  P4 qlib/experiment/utils.py generate_data_folder_from_qlib: docker -> local env
+  P4 qlib/experiment/utils.py      generate_data_folder_from_qlib: docker -> local env
   P5 factor_data_template/generate.py: limit universe (memory) via RDAGENT_QLIB_UNIVERSE
-  P6 log/server/app.py        provision qlib cn_data once before fin_* scenarios run
+  P6 log/server/app.py             provision qlib cn_data once before fin_* scenarios run
+  P7 shared/get_runtime_info.py    do not crash when the env probe returns no JSON
+
+LocalConf note: LocalEnv builds the subprocess PATH from conf.bin_path plus
+/bin:/usr/bin only. In python:3.10-slim the python/qrun binaries live in
+/usr/local/bin, so bin_path must carry the container PATH or every spawned
+`python ...` fails with "No such file or directory".
 """
 import sys
 from pathlib import Path
 
 ROOT = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(".")
+
+LOCAL_CONF = 'LocalConf(default_entry="python main.py", bin_path=os.environ.get("PATH", ""))'
 
 
 def patch(rel: str, old: str, new: str, note: str):
@@ -57,7 +63,7 @@ patch(
     "    if _conda_env_name and shutil.which(\"conda\"):\n"
     "        env = LocalEnv(conf=(CondaConf(conda_env_name=_conda_env_name)))\n"
     "    else:\n"
-    "        env = LocalEnv(conf=LocalConf(default_entry=\"python main.py\"))",
+    f"        env = LocalEnv(conf={LOCAL_CONF})",
     "P1 get_factor_env local fallback",
 )
 
@@ -65,8 +71,8 @@ patch(
 patch(
     "rdagent/components/coder/model_coder/conf.py",
     "from typing import Optional\n",
-    "import shutil\nfrom typing import Optional\n",
-    "P2 import shutil",
+    "import os\nimport shutil\nfrom typing import Optional\n",
+    "P2 imports",
 )
 patch(
     "rdagent/components/coder/model_coder/conf.py",
@@ -82,7 +88,7 @@ patch(
     "        if shutil.which(\"conda\"):\n"
     "            env = QlibCondaEnv(conf=QlibCondaConf())\n"
     "        else:\n"
-    "            env = LocalEnv(conf=LocalConf(default_entry=\"python main.py\"))",
+    f"            env = LocalEnv(conf={LOCAL_CONF})",
     "P2 get_model_env local fallback",
 )
 
@@ -90,8 +96,8 @@ patch(
 patch(
     "rdagent/scenarios/qlib/experiment/workspace.py",
     "import re\nfrom pathlib import Path",
-    "import re\nimport shutil\nfrom pathlib import Path",
-    "P3 import shutil",
+    "import os\nimport re\nimport shutil\nfrom pathlib import Path",
+    "P3 imports",
 )
 patch(
     "rdagent/scenarios/qlib/experiment/workspace.py",
@@ -103,7 +109,7 @@ patch(
     "            else:\n"
     "                from rdagent.utils.env import LocalConf, LocalEnv\n"
     "\n"
-    "                qtde = LocalEnv(conf=LocalConf(default_entry=\"python main.py\"))",
+    f"                qtde = LocalEnv(conf={LOCAL_CONF})",
     "P3 QlibFBWorkspace local fallback",
 )
 
@@ -128,7 +134,7 @@ patch(
     "    else:\n"
     "        from rdagent.utils.env import LocalConf, LocalEnv\n"
     "\n"
-    "        qtde = LocalEnv(conf=LocalConf(default_entry=\"python main.py\"))",
+    f"        qtde = LocalEnv(conf={LOCAL_CONF})",
     "P4 data folder gen local env",
 )
 
@@ -200,5 +206,17 @@ for tgt in ("fin_factor", "fin_factor_report", "fin_model", "fin_quant"):
         f"                        _ensure_qlib_cn_data()\n                        {tgt}(**self.kwargs)",
         f"P6 provision before {tgt}",
     )
+
+# ---------------------------------------------------------------- P7
+patch(
+    "rdagent/scenarios/shared/get_runtime_info.py",
+    "    json_match = re.search(r\"\\{.*\\}\", stdout, re.DOTALL)\n"
+    "    return json.dumps(json.loads(json_match.group()), indent=2)",
+    "    json_match = re.search(r\"\\{.*\\}\", stdout, re.DOTALL)\n"
+    "    if json_match is None:\n"
+    "        return \"{}\"\n"
+    "    return json.dumps(json.loads(json_match.group()), indent=2)",
+    "P7 tolerant runtime probe",
+)
 
 print("All rdagent patches applied.", flush=True)
