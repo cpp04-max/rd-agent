@@ -4,6 +4,8 @@
 //    open that specific run directly instead of the landing page.
 // 2) pre-fills the "overall instruction" user-interaction dialog with a
 //    scenario-appropriate example instruction, so users can just press SUBMIT.
+// 3) installs the collapsible "Live activity" panel on the trace detail page,
+//    streaming the run's stdout via /progress.
 const fs = require("fs");
 
 // ---------------------------------------------------------------- deep link

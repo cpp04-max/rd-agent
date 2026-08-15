@@ -14,6 +14,20 @@ The web UI lets you launch and monitor RD-Agent scenarios from your browser:
 This repo is a **deployment wrapper**: the `Dockerfile` pulls the official RD-Agent source,
 builds the Vue frontend, and installs everything into a single container.
 
+## Repo layout
+
+| Path | Purpose |
+|---|---|
+| `Dockerfile` | Two-stage build: patched RD-Agent + Vue frontend + invitation gate |
+| `fly.toml` | Fly.io config (machine size, `/data` volume, health check) |
+| `gate/gate.py` | Invitation gate (WSGI wrapper) + `/admin` console, wraps the Flask app |
+| `web-extras/patch-rdagent.py` | Build-time patches to upstream `rdagent/` (env selection, qlib data, progress streaming) |
+| `web-extras/injected/` | Code blocks the patcher injects, kept as lintable `.py` files |
+| `web-extras/patch-frontend.js` | Build-time patches to the Vue frontend (deep links, dialog pre-fill, live panel) |
+| `web-extras/examples.html` | Quickstart examples page (served at `/examples.html`) |
+| `web-extras/gen_example_specs.py` | Regenerates the bundled sample spec PDFs (`sample_*.pdf`) |
+| `web-extras/add_examples_link.py` | Injects the floating Quickstart button into the built `index.html` |
+
 ---
 
 ## Deploy to Fly.io
@@ -56,9 +70,7 @@ docker run --rm -p 19899:19899 --env-file .env rdagent-web
 ## Quickstart examples
 
 After deploy, open **https://rd-agent.fly.dev/examples.html** (also linked via the floating
-"Quickstart Examples" button in the dashboard). It provides one-click runs:
-
-Designed for quant researchers, with one-click runs:
+"Quickstart Examples" button in the dashboard). Designed for quant researchers, it provides one-click runs:
 
 1. **Implement a volatility model from a research report** — bundled EWMA-GARCH paper (General Model Implementation)
 2. **Implement an ensemble regressor from a report** — the end-to-end validated demo
@@ -98,9 +110,10 @@ flyctl secrets set --app rd-agent ADMIN_MASTER_KEY=so…cret
 
 ## Notes
 
-- **Code execution**: generated code runs inside the container's own Python
-  (`*_env_type=conda`, no extra setup). For containerised execution, mount the Docker
-  socket and switch both env vars to `docker`.
+- **Code execution**: generated code runs inside the container's own Python. The
+  build-time patches make the `conda` env types fall back to the container interpreter
+  when conda is absent (as in this image), so no extra setup is needed. For containerised
+  execution, mount the Docker socket and switch both env vars to `docker`.
 - **Finance scenarios** run in the container's own Python (build-time patches in
   `web-extras/patch-rdagent.py` replace upstream's conda/Docker env selection). The image
   ships qlib/mlflow/lightgbm via `pyqlib`. The first finance run downloads qlib CN market

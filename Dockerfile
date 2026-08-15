@@ -21,8 +21,10 @@ RUN pip install uv
 RUN git clone --depth 1 https://github.com/microsoft/RD-Agent.git /app/RD-Agent
 # Finance scenarios run inside this container (no conda/docker): patch env selection,
 # qlib data provisioning and memory limits before the package is installed.
-COPY web-extras/patch-rdagent.py /tmp/patch-rdagent.py
-RUN python3 /tmp/patch-rdagent.py /app/RD-Agent
+# The patcher loads code snippets from ./injected/ relative to itself.
+COPY web-extras/patch-rdagent.py /tmp/web-extras/patch-rdagent.py
+COPY web-extras/injected/ /tmp/web-extras/injected/
+RUN python3 /tmp/web-extras/patch-rdagent.py /app/RD-Agent
 WORKDIR /app/RD-Agent
 
 # Install rdagent + all runtime deps (uses uv for speed/reliability)
@@ -45,13 +47,9 @@ COPY --from=frontend /src/git_ignore_folder/static /app/RD-Agent/git_ignore_fold
 
 # Quickstart examples page + bundled sample inputs (served from /examples.html)
 COPY web-extras/examples.html git_ignore_folder/static/examples.html
-COPY web-extras/sample_model_report.pdf git_ignore_folder/static/examples-assets/sample_model_report.pdf
-COPY web-extras/sample_quant_model.pdf git_ignore_folder/static/examples-assets/sample_quant_model.pdf
-COPY web-extras/sample_factor_report.pdf git_ignore_folder/static/examples-assets/sample_factor_report.pdf
-COPY web-extras/sample_prime_attention.pdf git_ignore_folder/static/examples-assets/sample_prime_attention.pdf
-COPY web-extras/sample_chatsfm.pdf git_ignore_folder/static/examples-assets/sample_chatsfm.pdf
-COPY web-extras/sample_stock_moe_experts.pdf git_ignore_folder/static/examples-assets/sample_stock_moe_experts.pdf
-RUN python3 -c "import pathlib; p=pathlib.Path('git_ignore_folder/static/index.html'); s=p.read_text(); s=s.replace('</body>', '<a href=\"/examples.html\" style=\"position:fixed;right:18px;bottom:18px;z-index:9999;background:#1677ff;color:#fff;padding:10px 16px;border-radius:24px;font:600 14px/1 system-ui,sans-serif;text-decoration:none;box-shadow:0 4px 14px rgba(22,119,255,.4)\">Quickstart Examples</a></body>'); p.write_text(s)"
+COPY web-extras/sample_*.pdf git_ignore_folder/static/examples-assets/
+COPY web-extras/add_examples_link.py /tmp/add_examples_link.py
+RUN python3 /tmp/add_examples_link.py git_ignore_folder/static/index.html
 
 # Workspace, traces and logs live in git_ignore_folder/ and log/ — mount volumes to persist
 RUN mkdir -p git_ignore_folder/static git_ignore_folder/traces log

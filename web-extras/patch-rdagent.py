@@ -1,24 +1,44 @@
-"""Build-time patches so the finance (qlib) scenarios run inside this web container.
+"""Build-time backend patches: make upstream RD-Agent run inside this container.
 
-Upstream RD-Agent assumes it runs inside a conda environment (and Docker for the
-factor source-data generation). This container is plain CPython, so without these
-patches every finance scenario crashes during scenario construction -- the dashboard
-then shows: "No hypothesis generated due to some errors happened in previous steps."
+Upstream RD-Agent executes generated code in conda envs / Docker containers and
+its dashboard has no live log streaming. This container is plain CPython + Flask,
+so without these patches the scenarios crash ("No hypothesis generated ...") or
+the UI cannot show progress. Grouped by concern:
 
-Patches (all strict-match; build fails loudly if upstream drifts):
-  P1 factor_coder/config.py        get_factor_env: conda -> local fallback
-  P2 model_coder/conf.py           get_model_env:  conda -> local fallback
-  P3 qlib/experiment/workspace.py  QlibFBWorkspace.execute: conda -> local fallback
-  P4 qlib/experiment/utils.py      generate_data_folder_from_qlib: docker -> local env
-  P5 factor_data_template/generate.py: limit universe (memory) via RDAGENT_QLIB_UNIVERSE
-  P6 log/server/app.py             provision qlib cn_data once before fin_* scenarios run
-  P7 shared/get_runtime_info.py    do not crash when the env probe returns no JSON
+ENV  - run generated code in the container's own Python (P1-P4, P11)
+    Each patched env-selection keeps conda/docker when actually available and
+    otherwise falls back to a LocalEnv whose bin_path carries the container
+    PATH. (LocalEnv otherwise builds the subprocess PATH from conf.bin_path
+    plus /bin:/usr/bin only; in python:3.10-slim the python/qrun binaries live
+    in /usr/local/bin, so without bin_path every spawned `python ...` fails
+    with "No such file or directory".)
 
-LocalConf note: LocalEnv builds the subprocess PATH from conf.bin_path plus
-/bin:/usr/bin only. In python:3.10-slim the python/qrun binaries live in
-/usr/local/bin, so bin_path must carry the container PATH or every spawned
-`python ...` fails with "No such file or directory".
+      P1  factor_coder/config.py          get_factor_env()
+      P2  model_coder/conf.py             get_model_env()
+      P3  qlib/experiment/workspace.py    QlibFBWorkspace.execute()
+      P4  qlib/experiment/utils.py        generate_data_folder_from_qlib()
+      P11 model_coder/model.py            ModelCoder.execute()
+
+DATA - qlib market-data provisioning and dataset-build fixes (P5, P5b, P6)
+      P5   factor_data_template/generate.py  cap universe via RDAGENT_QLIB_UNIVERSE
+      P5b  factor_data_template/generate.py  intersect the debug block with it
+      P6   log/server/app.py                 download cn_data once before fin_* runs
+                                             (body lives in injected/qlib_provision.py)
+
+STREAM - live "thinking flow" for the dashboard (P8-P10)
+      P8   log/server/app.py  /progress stdout-tail endpoint
+                              (body lives in injected/progress_endpoint.py)
+      P9   log/server/app.py  stdout path fallback for traces reloaded after restart
+      P10  log/server/app.py  line-buffered run stdout
+
+ROBUSTNESS
+      P7   shared/get_runtime_info.py  tolerate a runtime probe without JSON output
+
+All patches are strict-match: the build fails loudly if upstream drifts. Large
+injected blocks live as real, lintable Python files in web-extras/injected/;
+the patcher splices them in at the anchors below.
 """
+import ast
 import sys
 from pathlib import Path
 
@@ -38,6 +58,16 @@ def patch(rel: str, old: str, new: str, note: str):
         sys.exit(1)
     p.write_text(s.replace(old, new))
     print(f"patched {rel} ({note})", flush=True)
+
+
+INJECTED = Path(__file__).resolve().parent / "injected"
+
+
+def snippet(name: str) -> str:
+    """Load an injected code block (kept as a real .py file so it stays lintable)."""
+    text = (INJECTED / name).read_text().rstrip("\n")
+    ast.parse(text + "\n")
+    return text
 
 
 # ---------------------------------------------------------------- P1
@@ -182,54 +212,9 @@ patch(
 patch(
     "rdagent/log/server/app.py",
     '_TARGETS_WITHOUT_USER_INTERACTION = {"general_model", "fin_factor_report"}',
-    '_TARGETS_WITHOUT_USER_INTERACTION = {"general_model", "fin_factor_report"}\n'
-    "\n"
-    "\n"
-    "def _ensure_qlib_cn_data() -> None:\n"
-    '    """Download qlib CN market data once (persisted on the /data volume via symlink)."""\n'
-    "    import os\n"
-    "    import subprocess\n"
-    "    import sys\n"
-    "    from pathlib import Path\n"
-    "\n"
-    "    try:\n"
-    "        target = Path(os.path.expanduser(\"~/.qlib/qlib_data/cn_data\"))\n"
-    "        if target.exists() and any(target.iterdir()):\n"
-    "            return\n"
-    "        try:\n"
-    "            target.parent.mkdir(parents=True, exist_ok=True)\n"
-    "        except OSError:\n"
-    "            home_qlib = Path(os.path.expanduser(\"~/.qlib\"))\n"
-    "            if home_qlib.is_symlink():  # dangling symlink (no volume mounted)\n"
-    "                home_qlib.unlink()\n"
-    "            target.parent.mkdir(parents=True, exist_ok=True)\n"
-    "        from filelock import FileLock\n"
-    "\n"
-    "        with FileLock(str(target.parent / \".cn_data.lock\")):\n"
-    "            if target.exists() and any(target.iterdir()):\n"
-    "                return\n"
-    "            print(f\"[qlib-data] downloading qlib cn_data to {target} ...\", flush=True)\n"
-    "            subprocess.check_call(\n"
-    "                [\n"
-    "                    sys.executable,\n"
-    "                    \"-m\",\n"
-    "                    \"qlib.cli.data\",\n"
-    "                    \"qlib_data\",\n"
-    "                    \"--name\",\n"
-    "                    \"qlib_data\",\n"
-    "                    \"--target_dir\",\n"
-    "                    str(target),\n"
-    "                    \"--interval\",\n"
-    "                    \"1d\",\n"
-    "                    \"--region\",\n"
-    "                    \"cn\",\n"
-    "                    \"--exists_skip\",\n"
-    "                ]\n"
-    "            )\n"
-    "            print(\"[qlib-data] cn_data ready.\", flush=True)\n"
-    "    except Exception as e:\n"
-    "        print(f\"[qlib-data] provisioning failed: {e}\", flush=True)",
-    "P6 helper",
+    '_TARGETS_WITHOUT_USER_INTERACTION = {"general_model", "fin_factor_report"}\n\n\n'
+    + snippet("qlib_provision.py"),
+    "P6 provision qlib data helper",
 )
 for tgt in ("fin_factor", "fin_factor_report", "fin_model", "fin_quant"):
     patch(
@@ -256,50 +241,8 @@ patch(
 patch(
     "rdagent/log/server/app.py",
     '@app.route("/traces", methods=["GET"])',
-    '''@app.route("/progress", methods=["GET"])
-def progress_tail():
-    """Live stdout tail powering the dashboard's 'thinking flow' panel."""
-    trace_id = request.args.get("id", "")
-    try:
-        offset = max(0, int(request.args.get("offset", "0")))
-    except ValueError:
-        offset = 0
-    normalized_trace_id = str(trace_id or "").strip()
-    task = (
-        rdagent_processes.get(str(log_folder_path / normalized_trace_id))
-        if normalized_trace_id
-        else None
-    )
-    alive = bool(task is not None and task.is_alive())
-    stdout_path = _resolve_stdout_path(trace_id)
-    if stdout_path is None or not stdout_path.exists() or not stdout_path.is_file():
-        return jsonify({"text": "", "offset": offset, "size": 0, "alive": alive})
-    try:
-        size = stdout_path.stat().st_size
-    except OSError:
-        return jsonify({"text": "", "offset": offset, "size": 0, "alive": alive})
-    if offset > size:
-        offset = 0
-    max_bytes = 200_000
-    if size - offset > max_bytes:
-        offset = size - max_bytes
-    try:
-        with open(stdout_path, "rb") as f:
-            f.seek(offset)
-            chunk = f.read()
-    except OSError:
-        return jsonify({"text": "", "offset": offset, "size": size, "alive": alive})
-    return jsonify(
-        {
-            "text": chunk.decode("utf-8", errors="replace"),
-            "offset": offset + len(chunk),
-            "size": size,
-            "alive": alive,
-        }
-    )
-
-
-@app.route("/traces", methods=["GET"])''',
+    snippet("progress_endpoint.py")
+    + '\n\n\n@app.route("/traces", methods=["GET"])',
     "P8 /progress stdout tail endpoint",
 )
 

@@ -233,62 +233,36 @@ async function bundledPdf(name){
   const blob=await (await fetch("/examples-assets/"+name)).blob();
   return new File([blob],name,{type:"application/pdf"});
 }
-document.getElementById("run-vol").onclick=async e=>{
-  const btn=e.currentTarget;
-  const fd=new FormData();
-  fd.append("scenario","General Model Implementation");
-  fd.append("files",await bundledPdf("sample_quant_model.pdf"));
-  launch(fd,btn);
-};
-document.getElementById("run-gm").onclick=async e=>{
-  const btn=e.currentTarget;
-  const fd=new FormData();
-  fd.append("scenario","General Model Implementation");
-  fd.append("files",await bundledPdf("sample_model_report.pdf"));
-  launch(fd,btn);
-};
-document.getElementById("run-pa").onclick=async e=>{
-  const btn=e.currentTarget;
-  const fd=new FormData();
-  fd.append("scenario","General Model Implementation");
-  fd.append("files",await bundledPdf("sample_prime_attention.pdf"));
-  launch(fd,btn);
-};
-document.getElementById("run-moe").onclick=async e=>{
-  const btn=e.currentTarget;
-  const fd=new FormData();
-  fd.append("scenario","General Model Implementation");
-  fd.append("files",await bundledPdf("sample_stock_moe_experts.pdf"));
-  launch(fd,btn);
-};
-document.getElementById("run-chatsfm").onclick=async e=>{
-  const btn=e.currentTarget;
-  const fd=new FormData();
-  fd.append("scenario","General Model Implementation");
-  fd.append("files",await bundledPdf("sample_chatsfm.pdf"));
-  launch(fd,btn);
-};
-document.getElementById("run-fr").onclick=async e=>{
-  const btn=e.currentTarget;
-  const fd=new FormData();
-  fd.append("scenario","Finance Data Building (Reports)");
-  fd.append("files",await bundledPdf("sample_factor_report.pdf"));
-  launch(fd,btn);
-};
-document.getElementById("run-ff").onclick=e=>{
-  const btn=e.currentTarget;
-  const fd=new FormData();
-  fd.append("scenario","Finance Data Building");
-  fd.append("loops",document.getElementById("ff-loops").value||"1");
-  launch(fd,btn);
-};
-document.getElementById("run-fq").onclick=e=>{
-  const btn=e.currentTarget;
-  const fd=new FormData();
-  fd.append("scenario","Finance Whole Pipeline");
-  fd.append("loops",document.getElementById("fq-loops").value||"1");
-  launch(fd,btn);
-};
+// One-click runs with bundled inputs: [button id, scenario, bundled PDF]
+const PDF_RUNS=[
+ ["run-vol","General Model Implementation","sample_quant_model.pdf"],
+ ["run-gm","General Model Implementation","sample_model_report.pdf"],
+ ["run-pa","General Model Implementation","sample_prime_attention.pdf"],
+ ["run-chatsfm","General Model Implementation","sample_chatsfm.pdf"],
+ ["run-moe","General Model Implementation","sample_stock_moe_experts.pdf"],
+ ["run-fr","Finance Data Building (Reports)","sample_factor_report.pdf"],
+];
+for(const [id,scenario,pdf] of PDF_RUNS){
+  document.getElementById(id).onclick=async e=>{
+    const fd=new FormData();
+    fd.append("scenario",scenario);
+    fd.append("files",await bundledPdf(pdf));
+    launch(fd,e.currentTarget);
+  };
+}
+// qlib loop runs: [button id, scenario, loops-input id]
+const LOOP_RUNS=[
+ ["run-ff","Finance Data Building","ff-loops"],
+ ["run-fq","Finance Whole Pipeline","fq-loops"],
+];
+for(const [id,scenario,loopsId] of LOOP_RUNS){
+  document.getElementById(id).onclick=e=>{
+    const fd=new FormData();
+    fd.append("scenario",scenario);
+    fd.append("loops",document.getElementById(loopsId).value||"1");
+    launch(fd,e.currentTarget);
+  };
+}
 const COMPS=["titanic","jane-street-market-prediction","amex-default-prediction","optiver-realized-volatility-prediction"];
 const cwrap=document.getElementById("comps");
 COMPS.forEach(c=>{
