@@ -1,4 +1,4 @@
-"""Regenerates the three bundled "General Model Implementation" spec PDFs.
+"""Regenerates the five bundled "General Model Implementation" spec PDFs.
 
    python3 web-extras/gen_example_specs.py
 
@@ -6,6 +6,8 @@ Outputs (committed; served from /examples-assets/ and uploaded by examples.html)
   sample_stock_moe_experts.pdf  - Stock-MoE ranking architecture + embedded real dataset
   sample_prime_attention.pdf    - simplified Prime Attention reproduction
   sample_chatsfm.pdf            - simplified ChaTSFM channel-adapter reproduction
+  sample_quant_model.pdf        - hybrid EWMA-GARCH volatility forecaster (torch)
+  sample_model_report.pdf       - boosting-style residual cascade forecaster (torch)
 
 All three specs target the CoSTEER PyTorch execution harness: one model.py with
 `model_cls = <nn.Module>`, model_type=TimeSeries, constructor
@@ -260,6 +262,112 @@ CHAT_SECTIONS: list[tuple[str, str]] = [
      "https://openreview.net/forum?id=OJriSoFuDq . Code: https://github.com/Clearloveyuan/ChaTSFM"),
 ]
 
+# ==================================================== Hybrid volatility (torch)
+VOL_TITLE = "Hybrid EWMA&ndash;GARCH Daily Volatility Forecaster (PyTorch Port)"
+VOL_SUBTITLE = (
+    "Model Research Report (Sample spec, PyTorch) &mdash; model_type: TimeSeries &mdash; a learnable blend of an "
+    "exponentially-weighted moving-average variance and a GARCH(1,1) conditional variance"
+)
+VOL_SECTIONS: list[tuple[str, str]] = [
+    ("1. Objective and model card",
+     "Risk desks forecast daily volatility from a trailing window of log returns. Two classic estimators are the "
+     "exponentially-weighted moving average (EWMA, RiskMetrics-style, decay lambda) and GARCH(1,1). Each has weaknesses: "
+     "EWMA has no mean reversion, GARCH is sensitive to initialization. This report specifies a LEARNABLE hybrid that "
+     "blends the two through a gate w, with all coefficients (lambda, omega, alpha, beta, w) as trainable, "
+     "reparameterized scalars so they stay in valid ranges under any gradient update. Model card:<br/><br/>"
+     "<font face='Courier' size='8'>"
+     "model_name: HybridVolatilityModel<br/>"
+     "model_type: TimeSeries<br/>"
+     "description: EWMA-GARCH hybrid daily variance forecaster. Reads the target series from channel 0 of the input "
+     "window, iterates an EWMA variance and a GARCH(1,1) conditional variance over the window, blends them with a learned "
+     "gate, and returns the annualized volatility forecast as (batch_size, 1).<br/>"
+     "hyperparameters: annualization factor = 252; eps = 1e-8<br/>"
+     "training_hyperparameters: n_epochs = 400; lr = 1e-2; early_stop = 50; batch_size = full-batch; weight_decay = 0"
+     "</font>"),
+    ("2. Integration contract (mandatory)", CONTRACT),
+    ("3. Model formulation",
+     "forward(x) with x of shape (B, T, F). Channel 0 carries the daily log-return series r = x[..., 0] of shape (B, T). "
+     "The other channels may be ignored. Define reparameterized scalars (all nn.Parameter, one element each): "
+     "lam = sigmoid(p_lam), alpha = sigmoid(p_alpha), beta = sigmoid(p_beta), w = sigmoid(p_w), omega = abs(p_omega). "
+     "Squash the gate inputs into valid ranges so the recurrence is stable for ANY parameter value, including the "
+     "acceptance test's all-ones overwrite.<br/><br/>"
+     "Iterate t = 1..T-1 over the window using the squared returns r2 = r[:, :-1] ** 2:<br/>"
+     "&nbsp;&nbsp;EWMA:&nbsp;&nbsp;&nbsp;&nbsp;v_t = lam * v_{t-1} + (1 - lam) * r2_t<br/>"
+     "&nbsp;&nbsp;GARCH:&nbsp;&nbsp;s2_t = omega + alpha * r2_t + beta * s2_{t-1}<br/>"
+     "Initialize v_0 to the mean of r2 (detached, i.e. via .item()) and s2_0 to the same scalar. Blend the final-step "
+     "variances V = w * v_T + (1 - w) * s2_T and return the annualized volatility sqrt(V * 252 + 1e-8) reshaped to "
+     "(B, 1). When T &lt; 2 there is no recurrence; return sqrt(1e-4 * 252 + 1e-8) as a (B, 1) constant."),
+    ("4. Stability requirements",
+     "With every parameter overwritten by 1.0 and an all-ones input: lam = alpha = beta = w = sigmoid(1) ~ 0.731, "
+     "omega = abs(1) = 1, and r2 = 1 everywhere, so both recurrences are bounded positive scalars and the output is finite. "
+     "Because the gate inputs pass through sigmoid/abs, no gradient step can push lambda/alpha/beta/w outside (0,1) or "
+     "omega below 0, which keeps the variance recursions non-negative and finite. No BatchNorm; no division by a "
+     "parameter; the only division-free nonlinearity is sqrt of a strictly positive quantity (eps-guarded)."),
+    ("5. Demo data and evaluation (__main__ guard only)",
+     "Inside the guard simulate a GARCH(1,1) return stream with torch.manual_seed(42): T_total = 2500 daily returns with "
+     "alpha = 0.08, beta = 0.90 and a long-run variance omega that LEVEL-SHIFTS across three regimes (e.g. 5e-6 for days "
+     "0-799, 4e-5 for days 800-1699, 1e-5 thereafter). This non-stationarity is deliberate: a single static baseline "
+     "cannot track it, so an adaptive forecaster is rewarded. Slide windows with look-back 60 and 5 lagged return "
+     "channels (construct the model with num_timesteps = 60, num_features = 5); the label is the realized annualized "
+     "volatility of the NEXT 5 days, sqrt(mean(r_next5^2) * 252). Chronological 70/15/15 split. Train with full-batch "
+     "Adam (lr 1e-2, max 400 epochs, early-stop patience 50 on validation MSE, restore best weights). Report test MSE for "
+     "the model and for two static baselines: (a) the unconditional variance computed from the whole-sample mean omega, "
+     "and (b) the training-mean realized volatility held constant. Reference run: model ~0.016, beating the constant "
+     "baseline ~0.024 and the unconditional baseline ~0.044. Success: model test MSE is lower than BOTH static baselines."),
+    ("6. Reference",
+     "J.P. Morgan/Reuters. RiskMetrics - Technical Document (4th ed.), 1996 (EWMA volatility). "
+     "T. Bollerslev. Generalized Autoregressive Conditional Heteroskedasticity. Journal of Econometrics 31, 1986 (GARCH)."),
+]
+
+# =================================================== Residual cascade (torch)
+CASCADE_TITLE = "Residual Cascade: Boosting-Style Staged MLP Forecaster (PyTorch)"
+CASCADE_SUBTITLE = (
+    "Model Research Report (Sample spec, PyTorch) &mdash; model_type: TimeSeries &mdash; a differentiable analogue of "
+    "gradient boosting: a linear mean head plus a cascade of small MLP stages that each fit the residual"
+)
+CASCADE_SECTIONS: list[tuple[str, str]] = [
+    ("1. Objective and model card",
+     "Gradient-boosted trees win many tabular competitions by adding many weak learners, each fitting the residual of the "
+     "ensemble so far. This report specifies a fully differentiable torch analogue: a linear 'mean head' produces the "
+     "initial prediction, then n_stages small MLP stages each add a gated correction computed from the flattened input "
+     "window. It is a single forward pass (no sequential fitting loop), so it trains end-to-end with one optimizer while "
+     "keeping the boosting intuition. Model card:<br/><br/>"
+     "<font face='Courier' size='8'>"
+     "model_name: ResidualCascadeModel<br/>"
+     "model_type: TimeSeries<br/>"
+     "description: Boosting-style residual cascade. Flattens the input window, applies a linear mean head, then adds "
+     "n_stages gated two-layer Tanh MLP corrections, each scaled by a shared learned gate eta; returns a scalar forecast "
+     "as (batch_size, 1).<br/>"
+     "hyperparameters: n_stages = 5; hidden = 8<br/>"
+     "training_hyperparameters: n_epochs = 40; lr = 1e-3; early_stop = 10; batch_size = 128; weight_decay = 0"
+     "</font>"),
+    ("2. Integration contract (mandatory)", CONTRACT),
+    ("3. Model formulation",
+     "forward(x) with x of shape (B, T, F). Flatten h = x.reshape(B, T*F) (an nn.Flatten is fine). Let in_dim = T*F "
+     "(compute it from num_features * num_timesteps in __init__). Base prediction f = mean_head(h) with mean_head an "
+     "nn.Linear(in_dim, 1). Gate eta = sigmoid(p_eta) for a scalar nn.Parameter p_eta. The cascade is an nn.ModuleList of "
+     "n_stages stages, each stage = nn.Sequential(nn.Linear(in_dim, hidden), nn.Tanh(), nn.Linear(hidden, 1)). Accumulate "
+     "f = f + eta * stage(h) over all stages and return f as (B, 1). Every stage sees the SAME flattened input h (this is "
+     "the boosting 'weak learner on the features' analogue); the residual-fitting behaviour emerges from training."),
+    ("4. Stability requirements",
+     "With every parameter overwritten by 1.0 and an all-ones input: mean_head(h) is a finite scalar, each stage output is "
+     "bounded by the Tanh in [-1, 1] after its final linear layer is itself bounded for the fixed all-ones h, and "
+     "eta = sigmoid(1) ~ 0.731, so the sum of 5 gated corrections stays finite. No BatchNorm and no division anywhere. "
+     "in_dim must be derived from the constructor arguments so model_cls(num_features=10, num_timesteps=4) yields "
+     "in_dim = 40 automatically."),
+    ("5. Demo data and evaluation (__main__ guard only)",
+     "Inside the guard build a synthetic regression with torch.manual_seed(7): N = 5000 windows, num_timesteps = 4, "
+     "num_features = 10, entries ~ N(0, 1). Label y = 0.6 * sum of the first 5 flattened features + sin(f5 * f6) + "
+     "0.3 * tanh(f7) + N(0, 0.1) noise, i.e. a linear part plus interaction and saturation nonlinearities. Chronological "
+     "70/15/15 split. Train the cascade (num_timesteps = 4, num_features = 10) with Adam (lr 1e-3, batch 128, max 40 "
+     "epochs) on MSE. Compare test MSE against a single nn.Linear(T*F, 1) trained the same way. Reference run: cascade "
+     "~1.07 vs linear ~2.66, with Var(y_test) ~2.29. Success: the cascade test MSE is strictly lower than the linear "
+     "baseline's."),
+    ("6. Reference",
+     "J.H. Friedman. Greedy Function Approximation: A Gradient Boosting Machine. Annals of Statistics 29(5), 2001. "
+     "T. Chen, C. Guestrin. XGBoost: A Scalable Tree Boosting System. KDD 2016."),
+]
+
 
 def build_pdf(path: Path, title: str, subtitle: str, sections: list[tuple[str, str]], csv_appendix: str | None = None):
     styles = getSampleStyleSheet()
@@ -296,3 +404,5 @@ if __name__ == "__main__":
     )
     build_pdf(HERE / "sample_prime_attention.pdf", PRIME_TITLE, PRIME_SUBTITLE, PRIME_SECTIONS)
     build_pdf(HERE / "sample_chatsfm.pdf", CHAT_TITLE, CHAT_SUBTITLE, CHAT_SECTIONS)
+    build_pdf(HERE / "sample_quant_model.pdf", VOL_TITLE, VOL_SUBTITLE, VOL_SECTIONS)
+    build_pdf(HERE / "sample_model_report.pdf", CASCADE_TITLE, CASCADE_SUBTITLE, CASCADE_SECTIONS)

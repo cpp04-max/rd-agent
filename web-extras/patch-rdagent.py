@@ -33,6 +33,8 @@ STREAM - live "thinking flow" for the dashboard (P8-P10)
 
 ROBUSTNESS
       P7   shared/get_runtime_info.py  tolerate a runtime probe without JSON output
+      P12  log/server/app.py           re-raise scenario crashes (real end_code, no fake success)
+      P13  log/ui/storage.py           skip research.tasks rendering when no tasks were extracted
 
 All patches are strict-match: the build fails loudly if upstream drifts. Large
 injected blocks live as real, lintable Python files in web-extras/injected/;
@@ -320,4 +322,22 @@ patch(
     "P11b model execute local fallback",
 )
 
+patch(
+    "rdagent/log/server/app.py",
+    "                except Exception:\n                    traceback.print_exc()",
+    "                except Exception:\n                    traceback.print_exc()\n                    raise",
+    "P12 re-raise scenario crashes",
+)
+patch(
+    "rdagent/log/ui/storage.py",
+    "            else:\n"
+    "                tasks: list[FactorTask | ModelTask] = obj\n"
+    "            if isinstance(tasks[0], FactorTask):",
+    "            else:\n"
+    "                tasks: list[FactorTask | ModelTask] = obj\n"
+    "            if not tasks:\n"
+    "                return {}\n"
+    "            if isinstance(tasks[0], FactorTask):",
+    "P13 guard empty task list",
+)
 print("All rdagent patches applied.", flush=True)

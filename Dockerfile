@@ -31,6 +31,13 @@ WORKDIR /app/RD-Agent
 RUN uv pip install --system -r requirements.txt \
  && uv pip install --system --no-deps .
 
+# litellm 1.97.0 regression: its `Message` model is not fully defined, so every
+# chat completion raises before any HTTP call and RD-Agent surfaces it as
+# "Failed to create chat completion after 10 retries" (killing each scenario at
+# its first LLM call -> "No hypothesis generated ..."). 1.95.0 is verified good
+# with pydantic 2.13 / openai 2.54; keep this pin until upstream fixes it.
+RUN uv pip install --system "litellm==1.95.0"
+
 # Finance (qlib) scenarios: qlib + mlflow + lightgbm + deps
 RUN uv pip install --system pyqlib
 
