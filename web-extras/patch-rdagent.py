@@ -35,6 +35,7 @@ ROBUSTNESS
       P7   shared/get_runtime_info.py  tolerate a runtime probe without JSON output
       P12  log/server/app.py           re-raise scenario crashes (real end_code, no fake success)
       P13  log/ui/storage.py           skip research.tasks rendering when no tasks were extracted
+      P14  utils/qlib.py               validate_qlib_features without conda
 
 All patches are strict-match: the build fails loudly if upstream drifts. Large
 injected blocks live as real, lintable Python files in web-extras/injected/;
@@ -340,4 +341,37 @@ patch(
     "            if isinstance(tasks[0], FactorTask):",
     "P13 guard empty task list",
 )
+# ---------------------------------------------------------------- P14
+# validate_qlib_features() probes user-supplied base features by running
+# test_fea.py inside a conda env (rdagent4qlib). Neither this container nor
+# typical sandboxes ship conda, so the interactive finance loops (fin_factor,
+# fin_quant) re-ask the user for features forever. Fall back to a LocalEnv
+# using the current interpreter (qlib is installed in it) when conda is absent.
+patch(
+    "rdagent/utils/qlib.py",
+    "from rdagent.core.experiment import FBWorkspace\n"
+    "from rdagent.utils.env import QlibCondaConf, QlibCondaEnv",
+    "import os\n"
+    "import shutil\n"
+    "\n"
+    "from rdagent.core.experiment import FBWorkspace\n"
+    "from rdagent.utils.env import QlibCondaConf, QlibCondaEnv",
+    "P14 qlib.py imports",
+)
+patch(
+    "rdagent/utils/qlib.py",
+    "    qlib_env = QlibCondaEnv(conf=QlibCondaConf())\n"
+    "    qlib_env.prepare()\n",
+    "    if shutil.which(\"conda\"):\n"
+    "        qlib_env = QlibCondaEnv(conf=QlibCondaConf())\n"
+    "        qlib_env.prepare()\n"
+    "    else:\n"
+    "        from rdagent.utils.env import LocalConf, LocalEnv\n"
+    "\n"
+    "        qlib_env = LocalEnv(\n"
+    "            conf=LocalConf(default_entry=\"python test_fea.py\", bin_path=os.environ.get(\"PATH\", \"\"))\n"
+    "        )\n",
+    "P14 validate without conda",
+)
+
 print("All rdagent patches applied.", flush=True)

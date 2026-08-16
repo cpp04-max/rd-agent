@@ -41,6 +41,12 @@ RUN uv pip install --system "litellm==1.95.0"
 # Finance (qlib) scenarios: qlib + mlflow + lightgbm + deps
 RUN uv pip install --system pyqlib
 
+# mlflow 3.x regression: its FileStore rejects the legacy './mlruns' backend and
+# its async metric logging breaks qlib's recorder ("Metric 'Rank IC' is malformed.
+# No data found."), which kills every qlib backtest in the finance loops. qlib
+# needs mlflow 2.x; keep this pin until qlib supports mlflow 3.
+RUN uv pip install --system "mlflow==2.22.2"
+
 # Model execution harness (General Model Implementation + fin model/quant steps)
 # imports torch: the CoSTEER runner does `import torch` and calls the generated
 # nn.Module. Use the PyTorch CPU index ONLY - it is self-contained (hosts torch's
