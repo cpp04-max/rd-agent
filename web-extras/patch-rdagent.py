@@ -37,6 +37,11 @@ ROBUSTNESS
       P13  log/ui/storage.py           skip research.tasks rendering when no tasks were extracted
       P14  utils/qlib.py               validate_qlib_features without conda
 
+SCENARIO - LOB feature auto-discovery + statistical market making (P15, P16)
+      P15  scenarios/lob_smm/*         install new package (install_file) and wire the
+                                       web dispatch / upload mapping / no-interaction set
+      P16  log/ui/storage.py           render lob_chart (equity curve) + lob_metrics dict
+
 All patches are strict-match: the build fails loudly if upstream drifts. Large
 injected blocks live as real, lintable Python files in web-extras/injected/;
 the patcher splices them in at the anchors below.
@@ -71,6 +76,22 @@ def snippet(name: str) -> str:
     text = (INJECTED / name).read_text().rstrip("\n")
     ast.parse(text + "\n")
     return text
+
+
+def install_file(rel: str, src: str, note: str):
+    """Create a brand-new file in the tree from an injected source file.
+
+    Unlike patch() (string-replace on an existing file), this copies a whole
+    file so the patcher can add modules that upstream does not ship. Empty
+    files (e.g. __init__.py) skip the syntax check.
+    """
+    dst = ROOT / rel
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    text = (INJECTED / src).read_text()
+    if src.endswith(".py") and text.strip():
+        ast.parse(text)
+    dst.write_text(text)
+    print(f"installed {rel} ({note})", flush=True)
 
 
 # ---------------------------------------------------------------- P1
@@ -372,6 +393,88 @@ patch(
     "            conf=LocalConf(default_entry=\"python test_fea.py\", bin_path=os.environ.get(\"PATH\", \"\"))\n"
     "        )\n",
     "P14 validate without conda",
+)
+
+# ---------------------------------------------------------------- P15
+# LOB feature auto-discovery + statistical market making (SMM). This scenario
+# is self-contained (synthetic order-book data, no qlib / Kaggle), so upstream
+# does not ship it: the patcher CREATES the package via install_file, then
+# wires it into the web server dispatch, the upload-form scenario mapping and
+# the no-user-interaction target set.
+install_file("rdagent/scenarios/lob_smm/__init__.py", "empty_init.py", "P15 lob_smm package")
+install_file("rdagent/scenarios/lob_smm/pipeline.py", "lob_pipeline.py", "P15 lob_smm pipeline")
+patch(
+    "rdagent/log/server/app.py",
+    '_TARGETS_WITHOUT_USER_INTERACTION = {"general_model", "fin_factor_report"}',
+    '_TARGETS_WITHOUT_USER_INTERACTION = {"general_model", "fin_factor_report", "lob_smm"}',
+    "P15 lob_smm no user interaction",
+)
+patch(
+    "rdagent/log/server/app.py",
+    "                    else:\n"
+    '                        raise ValueError(f"Unknown target: {self.target_name}")',
+    '                    elif self.target_name == "lob_smm":\n'
+    "                        from rdagent.scenarios.lob_smm.pipeline import main as lob_smm\n"
+    "\n"
+    "                        lob_smm(**self.kwargs)\n"
+    "                    else:\n"
+    '                        raise ValueError(f"Unknown target: {self.target_name}")',
+    "P15 lob_smm dispatch branch",
+)
+patch(
+    "rdagent/log/server/app.py",
+    '    if scenario == "Data Science":\n'
+    '        target_name = "data_science"\n'
+    '        kwargs = {"competition": competition, "loop_n": loop_n_val, "timeout": all_duration_val}\n'
+    "\n"
+    "    if target_name is None:",
+    '    if scenario == "Data Science":\n'
+    '        target_name = "data_science"\n'
+    '        kwargs = {"competition": competition, "loop_n": loop_n_val, "timeout": all_duration_val}\n'
+    '    if scenario == "LOB Market Making":\n'
+    '        target_name = "lob_smm"\n'
+    '        kwargs = {"loops": loop_n_val}\n'
+    "\n"
+    "    if target_name is None:",
+    "P15 lob_smm upload mapping",
+)
+
+# ---------------------------------------------------------------- P16
+# Render the LOB artifacts in the dashboard: the equity-curve chart and the
+# metrics dict logged by the pipeline. Inserted ahead of the generic "running"
+# branch so the dedicated tags win.
+patch(
+    "rdagent/log/ui/storage.py",
+    '        elif "running" in tag:\n'
+    "            from rdagent.core.experiment import Experiment",
+    '        elif "lob_chart" in tag:\n'
+    "            import plotly\n"
+    "\n"
+    "            data = {\n"
+    '                "id": id,\n'
+    '                "msg": {\n'
+    '                    "tag": "feedback.return_chart",\n'
+    '                    "timestamp": timestamp,\n'
+    '                    "loop_id": li,\n'
+    '                    "content": {"chart_html": plotly.io.to_html(obj)},\n'
+    "                },\n"
+    "            }\n"
+    '        elif "lob_metrics" in tag:\n'
+    "            import json\n"
+    "\n"
+    "            data = {\n"
+    '                "id": id,\n'
+    '                "msg": {\n'
+    '                    "tag": "feedback.metric",\n'
+    '                    "old_tag": tag,\n'
+    '                    "timestamp": timestamp,\n'
+    '                    "loop_id": li,\n'
+    '                    "content": {"result": json.dumps(obj)},\n'
+    "                },\n"
+    "            }\n"
+    '        elif "running" in tag:\n'
+    "            from rdagent.core.experiment import Experiment",
+    "P16 lob chart + metrics storage",
 )
 
 print("All rdagent patches applied.", flush=True)

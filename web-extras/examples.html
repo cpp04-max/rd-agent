@@ -154,6 +154,18 @@ code{background:#eef1f6;border-radius:4px;padding:1px 5px;font-size:12px}
   </div>
 </div>
 
+<h2 class="sec">⑥ Market microstructure — LOB feature discovery → market making</h2>
+<div class="grid">
+  <div class="card">
+    <h3>Auto-discover LOB features &amp; train a market-making signal <span class="badge new">self-contained · ~2–5 min</span></h3>
+    <p class="sub"><b>Scenario: LOB Market Making.</b> On a synthetic limit-order-book feed the agent proposes microstructure features (order-flow / book imbalance, microprice deviation, aggressive trade flow, …), writes them as pandas code, keeps those whose rank-IC clears a threshold, then trains a short-horizon drift model and uses its signal to skew market-making quotes. The backtest compares the signal-skewed strategy against a no-signal baseline.</p>
+    <label>Discovery rounds</label>
+    <input type="number" id="lob-loops" min="1" max="4" value="2">
+    <button class="run" id="run-lob">▶ Discover LOB features &amp; run SMM backtest</button>
+    <div class="note">No external data or qlib needed — the order book is generated deterministically around a latent order-flow-pressure state, so the discovered features are genuinely predictive and the run is reproducible offline. Watch for the equity-curve chart and the PnL-improvement metric.</div>
+  </div>
+</div>
+
 <div class="card" id="monitor">
   <h3>Live run: <span id="mon-id"></span> · <a id="mon-dash" href="/#/Playground">open in dashboard ↗</a></h3>
   <ul id="steps"></ul>
@@ -254,6 +266,7 @@ for(const [id,scenario,pdf] of PDF_RUNS){
 const LOOP_RUNS=[
  ["run-ff","Finance Data Building","ff-loops"],
  ["run-fq","Finance Whole Pipeline","fq-loops"],
+ ["run-lob","LOB Market Making","lob-loops"],
 ];
 for(const [id,scenario,loopsId] of LOOP_RUNS){
   document.getElementById(id).onclick=e=>{
