@@ -3,167 +3,87 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>RD-Agent · Quant Research Workbench</title>
+<title>RD-Agent(Q) · Factor Research Reproduction</title>
 <style>
 :root{color-scheme:light;}
 *{box-sizing:border-box}
 body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#f5f7fb;color:#1f2430}
-header{background:linear-gradient(120deg,#0b1f3a,#123a6d 60%,#1677ff);color:#fff;padding:30px 24px 22px}
-header .wrap{max-width:1080px;margin:0 auto}
-header h1{margin:0 0 6px;font-size:25px}
-header p{margin:0;opacity:.88;font-size:14px;max-width:860px;line-height:1.55}
+header{background:linear-gradient(120deg,#0b1f3a,#123a6d 60%,#1677ff);color:#fff;padding:34px 24px 26px}
+header .wrap{max-width:900px;margin:0 auto}
+header h1{margin:0 0 8px;font-size:26px}
+header p{margin:0;opacity:.9;font-size:14.5px;max-width:760px;line-height:1.6}
 header a{color:#bcd4ff;text-decoration:none;font-weight:600}
-header .links{margin-top:12px;font-size:13px;display:flex;gap:18px;flex-wrap:wrap}
-.flow{background:#0e2a52;color:#cfe0ff;font-size:12.5px;padding:8px 24px}
-.flow .wrap{max-width:1080px;margin:0 auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+header .links{margin-top:14px;font-size:13px;display:flex;gap:18px;flex-wrap:wrap}
+.flow{background:#0e2a52;color:#cfe0ff;font-size:12.5px;padding:10px 24px}
+.flow .wrap{max-width:900px;margin:0 auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .flow b{background:rgba(255,255,255,.12);padding:2px 9px;border-radius:999px;font-weight:600}
 .flow .arr{opacity:.6}
-main{max-width:1080px;margin:22px auto;padding:0 16px}
-h2.sec{font-size:15px;text-transform:uppercase;letter-spacing:.06em;color:#414a59;margin:26px 0 10px;display:flex;align-items:center;gap:8px}
-h2.sec::after{content:"";flex:1;height:1px;background:#e2e7f0}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
-.card{background:#fff;border:1px solid #e6eaf2;border-radius:12px;padding:18px;box-shadow:0 1px 3px rgba(16,24,40,.05)}
-.card h3{margin:0 0 4px;font-size:16.5px}
-.card .sub{font-size:13px;color:#5b6472;margin:0 0 12px;line-height:1.5}
-.badge{display:inline-block;font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;margin-left:6px;vertical-align:middle}
-.badge.fast{background:#e8f7ee;color:#0a7d3b}.badge.long{background:#fff4e0;color:#b25e00}.badge.adv{background:#eee;color:#555}.badge.new{background:#eef4ff;color:#123a6d}
-label{display:block;font-size:12px;font-weight:600;color:#414a59;margin:10px 0 4px}
-input[type=text],input[type=number]{width:100%;padding:8px 10px;border:1px solid #d4dae5;border-radius:8px;font-size:14px}
-button.run{margin-top:14px;background:#1677ff;border:0;color:#fff;font-weight:600;font-size:14px;padding:10px 18px;border-radius:8px;cursor:pointer}
+main{max-width:900px;margin:24px auto;padding:0 16px}
+.card{background:#fff;border:1px solid #e6eaf2;border-radius:14px;padding:24px;box-shadow:0 1px 3px rgba(16,24,40,.05)}
+.card h2{margin:0 0 6px;font-size:20px}
+.card .sub{font-size:14px;color:#4a5361;margin:0 0 16px;line-height:1.6}
+.badge{display:inline-block;font-size:11px;font-weight:700;padding:3px 9px;border-radius:999px;margin-left:8px;vertical-align:middle;background:#eef4ff;color:#123a6d}
+.method{background:#f8fafc;border:1px solid #eef1f6;border-radius:10px;padding:14px 16px;margin:0 0 18px}
+.method h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#5b6472}
+.method ol{margin:0;padding-left:20px;font-size:13.5px;color:#334155;line-height:1.7}
+.method code{background:#eef1f6;border-radius:4px;padding:1px 5px;font-size:12.5px}
+label{display:block;font-size:12px;font-weight:600;color:#414a59;margin:12px 0 5px}
+input[type=number]{width:120px;padding:9px 11px;border:1px solid #d4dae5;border-radius:8px;font-size:14px}
+button.run{margin-top:18px;background:#1677ff;border:0;color:#fff;font-weight:600;font-size:15px;padding:12px 22px;border-radius:9px;cursor:pointer}
 button.run:hover{background:#0e5fd8}
 button.run:disabled{background:#9db8e4;cursor:default}
-.note{font-size:12px;color:#7a8290;margin-top:10px;line-height:1.5}
-.warn{background:#fff7e8;border:1px solid #ffd591;border-radius:8px;padding:8px 10px;font-size:12px;color:#874d00;margin-top:10px;line-height:1.5}
-.chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
-.chip{border:1px solid #d4dae5;background:#f8fafc;color:#334155;border-radius:999px;padding:6px 12px;font-size:13px;cursor:pointer}
-.chip:hover{border-color:#1677ff;color:#1677ff}
-.chip.sel{background:#1677ff;border-color:#1677ff;color:#fff}
-#banner{margin:18px auto 0;padding:0 16px;max-width:1080px}
-#banner .inner{background:#eef4ff;border:1px solid #bcd4ff;color:#123a6d;border-radius:10px;padding:10px 14px;font-size:13px;line-height:1.5}
-#monitor{margin-top:26px;display:none}
+.note{font-size:12.5px;color:#7a8290;margin-top:14px;line-height:1.6}
+.warn{background:#fff7e8;border:1px solid #ffd591;border-radius:8px;padding:10px 12px;font-size:12.5px;color:#874d00;margin-top:14px;line-height:1.6}
+#banner{margin:20px auto 0;padding:0 16px;max-width:900px}
+#banner .inner{background:#eef4ff;border:1px solid #bcd4ff;color:#123a6d;border-radius:10px;padding:12px 15px;font-size:13px;line-height:1.6}
+#monitor{margin-top:24px;display:none}
 #monitor h3{margin:0 0 10px;font-size:16px}
-#steps{list-style:none;margin:0;padding:0;max-height:340px;overflow:auto}
+#steps{list-style:none;margin:0;padding:0;max-height:380px;overflow:auto}
 #steps li{padding:8px 10px;border-bottom:1px solid #f0f2f7;font-size:13px;display:flex;gap:10px;align-items:baseline}
 #steps li .t{color:#8a93a3;font-size:11px;min-width:64px}
 #steps li.ok{background:#f3fbf5}#steps li.bad{background:#fdeeee}
-footer{max-width:1080px;margin:14px auto 40px;padding:0 16px;font-size:12px;color:#8a93a3}
+footer{max-width:900px;margin:16px auto 44px;padding:0 16px;font-size:12px;color:#8a93a3;line-height:1.6}
 a{color:#1677ff}
 code{background:#eef1f6;border-radius:4px;padding:1px 5px;font-size:12px}
-@media(max-width:760px){.grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <header>
  <div class="wrap">
-  <h1>RD-Agent — Quant Research Workbench</h1>
-  <p>An autonomous research &amp; development agent for quant work: it turns model ideas, factor hypotheses and research reports into <b>running, backtested code</b>. Pick an example below and watch the full loop live — then open any run in the <a href="/#/Playground">dashboard</a>.</p>
+  <h1>RD-Agent<span style="opacity:.7">(Q)</span> — Factor Research Reproduction</h1>
+  <p>A single-purpose deployment that reproduces <b>R&amp;D-Agent-Quant</b> (<a href="https://arxiv.org/abs/2505.15155" target="_blank">arXiv:2505.15155</a>, NeurIPS 2025): a data-centric multi-agent framework for <b>joint factor + model co-optimization</b>. One click launches the full autonomous R&amp;D loop on real qlib market data — watch it live, then open the run in the <a href="/#/Playground">dashboard</a> for hypotheses, code, backtest charts and metrics.</p>
   <div class="links"><a href="/#/Playground">📊 Dashboard</a><a href="/admin">🔑 Invite admin</a></div>
  </div>
 </header>
 <div class="flow"><div class="wrap">
- <b>Research</b><span class="arr">→</span> hypothesis <span class="arr">→</span>
- <b>Experiment</b><span class="arr">→</span> tasks &amp; code <span class="arr">→</span>
- <b>Run &amp; feedback</b><span class="arr">→</span> metrics / backtest <span class="arr">→</span>
- <b>Evolve</b><span class="arr">↺</span> repeat
- <span class="arr">·</span> <span style="opacity:.85">When a run asks for an <b>overall instruction</b>, a ready-made example is already filled in — just press <b>SUBMIT</b>.</span>
+ <b>Research</b><span class="arr">→</span> goal-aligned hypothesis <span class="arr">→</span>
+ <b>Development</b><span class="arr">→</span> tasks &amp; Co-STEER code <span class="arr">→</span>
+ <b>qlib backtest</b><span class="arr">→</span> metrics <span class="arr">→</span>
+ <b>Feedback</b><span class="arr">→</span> multi-armed-bandit scheduler <span class="arr">↺</span> repeat
 </div></div>
 
 <main>
-<div id="banner"><div class="inner">💡 Runs appear in the <a href="/#/Playground">dashboard</a> history once they produce results. A run that stops immediately with <b>“config: null”</b> means the LLM backend is not configured — the admin should set the DashScope secrets (<code>OPENAI_API_KEY</code>, <code>CHAT_MODEL</code>, <code>OPENAI_API_BASE</code>) in Fly.</div></div>
+<div id="banner"><div class="inner">💡 The first run downloads qlib CN market data (~200&nbsp;MB, persisted on the volume) and builds the factor dataset — expect a slow start. When the loop asks for an <b>overall instruction</b>, a ready-made example is already filled in — just press <b>SUBMIT</b>. A run that stops immediately with <b>“config: null”</b> means the LLM backend is not configured (set <code>OPENAI_API_KEY</code>, <code>CHAT_MODEL</code>, <code>OPENAI_API_BASE</code> in Fly).</div></div>
 
-<h2 class="sec">① Zero-setup demos — one click, bundled inputs</h2>
-<div class="grid">
-  <div class="card">
-    <h3>Implement a volatility model from a research report <span class="badge fast">quant · ~5–15 min</span></h3>
-    <p class="sub"><b>Scenario: General Model Implementation.</b> The agent reads a bundled quant paper (EWMA–GARCH hybrid volatility forecasting), extracts the model design, writes the Python implementation, runs it and iterates until the metrics converge.</p>
-    <button class="run" id="run-vol">▶ Implement the volatility model</button>
-    <div class="note">Input: bundled 1-page report <a href="/examples-assets/sample_quant_model.pdf" target="_blank">EWMA-GARCH Hybrid (view PDF)</a>. Metrics: MSE + quasi-log-likelihood on synthetic returns. Or run your own PDF from the dashboard.</div>
-  </div>
-  <div class="card">
-    <h3>Implement an ensemble regressor from a report <span class="badge fast">validated e2e ✓ · ~5–15 min</span></h3>
-    <p class="sub"><b>Scenario: General Model Implementation.</b> Same flow on a boosting-style cascade of gated MLP stages for window regression — the torch-contract companion to the volatility spec.</p>
-    <button class="run" id="run-gm">▶ Implement the ensemble model</button>
-    <div class="note">Input: bundled report <a href="/examples-assets/sample_model_report.pdf" target="_blank">Boosting-Style Residual Cascade (view PDF)</a>.</div>
-  </div>
-</div>
+<div class="card" style="margin-top:20px">
+  <h2>Reproduce RD-Agent(Q): joint factor + model optimization <span class="badge">Finance Whole Pipeline · long-running</span></h2>
+  <p class="sub">The agent autonomously researches alpha factors <i>and</i> the return-forecasting model together, evolving both across rounds against real-market backtests — the exact pipeline described in the paper.</p>
 
-<h2 class="sec">② Alpha factor research — qlib</h2>
-<div class="grid">
-  <div class="card">
-    <h3>Explore alpha factors with the AI loop <span class="badge long">long-running</span></h3>
-    <p class="sub"><b>Scenario: Finance Data Building.</b> qlib-based loop that proposes, implements and backtests alpha factor hypotheses on the CN/CSI300 universe.</p>
-    <label>Loops</label>
-    <input type="number" id="ff-loops" min="1" value="1">
-    <button class="run" id="run-ff">▶ Start factor exploration</button>
-    <div class="note">First run downloads qlib CN market data (~200 MB, persisted on the volume) and builds the factor dataset — expect a slow start. Prefer loops = 1 for a first run.</div>
+  <div class="method">
+    <h4>What the loop does (paper → implementation)</h4>
+    <ol>
+      <li><b>Research stage</b> — sets goal-aligned prompts, forms hypotheses from quant domain priors, and maps each to concrete factor / model tasks.</li>
+      <li><b>Development stage</b> — the <code>Co-STEER</code> code-generation agent writes the factor &amp; model code, then executes it in a qlib backtest on real CN market data.</li>
+      <li><b>Feedback stage</b> — evaluates the backtest (IC / Rank&nbsp;IC, return, drawdown), and a multi-armed-bandit scheduler picks the next research direction.</li>
+      <li><b>Evolve</b> — repeats, jointly improving factors and the model. The paper reports up to <b>2× higher annualized return with ~70% fewer factors</b> vs classical factor libraries.</li>
+    </ol>
   </div>
-  <div class="card">
-    <h3>Implement a factor from a research report <span class="badge new">quant report → factor</span></h3>
-    <p class="sub"><b>Scenario: Finance Data Building (Reports).</b> The agent reads a factor research report and implements/backtests the described alpha factor in qlib. Try the bundled <b>Volume-Weighted Momentum (VWMOM)</b> factor, or upload your own report.</p>
-    <button class="run" id="run-fr">▶ Implement VWMOM factor from report</button>
-    <div class="note">Input: bundled report <a href="/examples-assets/sample_factor_report.pdf" target="_blank">VWMOM Alpha Factor (view PDF)</a>. Same qlib provisioning note as factor exploration.</div>
-  </div>
-</div>
 
-<h2 class="sec">③ End-to-end quant pipeline</h2>
-<div class="grid">
-  <div class="card">
-    <h3>Whole quant pipeline: factors → model → strategy <span class="badge long">long-running</span></h3>
-    <p class="sub"><b>Scenario: Finance Whole Pipeline.</b> Full quant R&amp;D loop: alpha factor construction, return forecasting model, and portfolio strategy, evolved across rounds.</p>
-    <label>Loops</label>
-    <input type="number" id="fq-loops" min="1" value="1">
-    <button class="run" id="run-fq">▶ Start full pipeline</button>
-    <div class="note">Same qlib prerequisites. For a first finance run, use section ② instead.</div>
-  </div>
-  <div class="card">
-    <h3>Data Interpreter on a Kaggle task <span class="badge adv">needs Kaggle credentials</span></h3>
-    <p class="sub"><b>Scenario: Data Science.</b> The agent plans, codes and iterates on a competition dataset. Good finance-flavoured picks:</p>
-    <div class="chips" id="comps"></div>
-    <label>Competition (or type any MLE-Bench name)</label>
-    <input type="text" id="ds-comp" value="titanic">
-    <label>Loops (blank = until time limit)</label>
-    <input type="number" id="ds-loops" min="1" placeholder="e.g. 3">
-    <button class="run" id="run-ds">▶ Start Data Science run</button>
-    <div class="warn">The container needs <code>KAGGLE_USERNAME</code> / <code>KAGGLE_JSON</code> Fly secrets to download competition data. Dataset sizes vary — small competitions (titanic) work best on the 1 GB machine.</div>
-  </div>
-</div>
-
-<h2 class="sec">④ Paper playground — play with recent research</h2>
-<div class="grid">
-  <div class="card">
-    <h3>Prime Attention: per-pair modulated attention for MTS <span class="badge new">arXiv 2509.12196 · ~5–15 min</span></h3>
-    <p class="sub"><b>Scenario: General Model Implementation.</b> A simplified, CPU-runnable reproduction of <i>Dynamic Relational Priming Improves Transformer in Multivariate Time Series</i> (Lee &amp; Clark): keys/values are modulated by a pair-specific “primer” built from FFT lead-lag cross-correlations, then compared head-to-head with standard attention on synthetic data with heterogeneous channel relationships.</p>
-    <button class="run" id="run-pa">▶ Reproduce Prime Attention (mini)</button>
-    <div class="note">Input: bundled spec <a href="/examples-assets/sample_prime_attention.pdf" target="_blank">Prime Attention mini (view PDF)</a>. PyTorch (CPU) model built from scratch by the agent, seeds fixed, runtime &lt; 10 min. Watch the dashboard to see the agent implement, run and iterate on it.</div>
-  </div>
-  <div class="card">
-    <h3>ChaTSFM: channel adapter for frozen TS foundation models <span class="badge new">ICML 2026 · ~5–15 min</span></h3>
-    <p class="sub"><b>Scenario: General Model Implementation.</b> A simplified reproduction of <i>Channel Adapter for Time Series Foundation Models in Zero-Shot Multivariate Forecasting</i> (Li et al.): a frozen channel-independent backbone plus a tiny (8-parameter) adapter — descriptor-conditioned channel similarity + gated sparse blending — pre-trained on a budgeted synthetic corpus and evaluated zero-shot.</p>
-    <button class="run" id="run-chatsfm">▶ Reproduce ChaTSFM (mini)</button>
-    <div class="note">Input: bundled spec <a href="/examples-assets/sample_chatsfm.pdf" target="_blank">ChaTSFM mini (view PDF)</a>. PyTorch (CPU) model built from scratch by the agent, seeds fixed, runtime &lt; 10 min.</div>
-  </div>
-</div>
-
-<h2 class="sec">⑤ Architecture lab — build &amp; test a custom quant architecture</h2>
-<div class="grid">
-  <div class="card">
-    <h3>Stock-ranking Mixture-of-Experts on real market data <span class="badge new">16 real stocks · ~5–15 min</span></h3>
-    <p class="sub"><b>Scenario: General Model Implementation.</b> Implement the MoE ranking architecture — feature encoder → temporal mixer → three experts (industry/sector, dynamic-KNN, global latent-factor tokens) combined by a regime router g₁,g₂,g₃ → cross-asset ranking/return forecast — then evaluate it on the bundled dataset: one year of <b>real public daily closes</b> for 16 US large-caps across 4 GICS-style sectors.</p>
-    <button class="run" id="run-moe">▶ Run Stock-MoE ranking experiment</button>
-    <div class="note">Input: bundled spec <a href="/examples-assets/sample_stock_moe_experts.pdf" target="_blank">Stock-MoE spec + embedded dataset (view PDF)</a>. PyTorch (CPU) model built from scratch by the agent, seed fixed, runtime &lt; 15 min. Reference result: routing turns individually-unprofitable experts into positive rank IC and long-short returns.</div>
-  </div>
-</div>
-
-<h2 class="sec">⑥ Market microstructure — LOB feature discovery → market making</h2>
-<div class="grid">
-  <div class="card">
-    <h3>Auto-discover LOB features &amp; train a market-making signal <span class="badge new">self-contained · ~2–5 min</span></h3>
-    <p class="sub"><b>Scenario: LOB Market Making.</b> On a synthetic limit-order-book feed the agent proposes microstructure features (order-flow / book imbalance, microprice deviation, aggressive trade flow, …), writes them as pandas code, keeps those whose rank-IC clears a threshold, then trains a short-horizon drift model and uses its signal to skew market-making quotes. The backtest compares the signal-skewed strategy against a no-signal baseline.</p>
-    <label>Discovery rounds</label>
-    <input type="number" id="lob-loops" min="1" max="4" value="2">
-    <button class="run" id="run-lob">▶ Discover LOB features &amp; run SMM backtest</button>
-    <div class="note">No external data or qlib needed — the order book is generated deterministically around a latent order-flow-pressure state, so the discovered features are genuinely predictive and the run is reproducible offline. Watch for the equity-curve chart and the PnL-improvement metric.</div>
-  </div>
+  <label for="q-loops">R&amp;D loops (each loop = one research → develop → feedback iteration; keep low for a first run)</label>
+  <input type="number" id="q-loops" min="1" value="1">
+  <button class="run" id="run-q">▶ Reproduce RD-Agent(Q)</button>
+  <div class="note">Scenario: <b>Finance Whole Pipeline</b> (<code>fin_quant</code>). Requires qlib CN data (auto-provisioned on first run) and a configured Qwen/DashScope LLM backend. For a deeper look at any run, open it in the <a href="/#/Playground">dashboard</a>.</div>
+  <div class="warn">This is a real research loop on real market data — a single loop can take many minutes and makes multiple LLM calls. Start with <b>1 loop</b> to validate the setup before running more.</div>
 </div>
 
 <div class="card" id="monitor">
@@ -171,18 +91,18 @@ code{background:#eef1f6;border-radius:4px;padding:1px 5px;font-size:12px}
   <ul id="steps"></ul>
 </div>
 </main>
-<footer>RD-Agent web app · scenarios run as background processes on the Fly machine; this page polls the trace stream every 5&nbsp;seconds. Invites are managed by the admin at <a href="/admin">/admin</a>.</footer>
+<footer>Single-purpose deployment of <a href="https://github.com/microsoft/RD-Agent" target="_blank">microsoft/RD-Agent</a> reproducing <a href="https://arxiv.org/abs/2505.15155" target="_blank">RD-Agent(Q)</a>. The loop runs as a background process on the Fly machine; this page polls the trace stream every 5&nbsp;seconds. Invites are managed by the admin at <a href="/admin">/admin</a>.</footer>
 
 <script>
 const LABELS = {
- "research.pdf_image":"📄 Reading report pages…",
  "research.hypothesis":"🧠 Research hypothesis formed",
- "research.tasks":"📋 Implementation tasks planned",
- "evolving.codes":"⌨️ Code written / evolved",
+ "research.tasks":"📋 Factor / model tasks planned",
+ "evolving.codes":"⌨️ Co-STEER wrote / evolved code",
  "evolving.feedbacks":"🔍 Execution feedback collected",
- "feedback.metric":"📊 Evaluation metrics reported",
- "feedback.return_chart":"📈 Backtest chart generated",
+ "feedback.metric":"📊 Backtest metrics reported",
+ "feedback.return_chart":"📈 Return chart generated",
  "feedback.config":"🛠️ Scenario configuration extracted",
+ "feedback.hypothesis_feedback":"🧭 Feedback → next research direction",
 };
 let pollTimer=null, traceId=null;
 
@@ -196,7 +116,7 @@ function describe(m){
   if(tag==="feedback.config" && (c.config===null||c.config===undefined)){
     return {text:"⚠️ Config extraction returned null — the LLM call failed. Check OPENAI_API_KEY / CHAT_MODEL / OPENAI_API_BASE secrets.", bad:true, ok:false};
   }
-  if(tag==="research.hypothesis"&&c.hypothesis) text+=" — “"+String(c.hypothesis).slice(0,140)+"”";
+  if(tag==="research.hypothesis"&&c.hypothesis) text+=" — “"+String(c.hypothesis).slice(0,160)+"”";
   return {text, ok:true, bad:false};
 }
 function fmtTs(ts){ try{return new Date(ts).toLocaleTimeString();}catch(e){return ""} }
@@ -207,7 +127,9 @@ async function poll(){
     const r=await fetch("/trace",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:traceId,all:true})});
     const msgs=await r.json();
     const ul=document.getElementById("steps");
-    for(const m of msgs){
+    const have=ul.children.length;
+    const fresh=Array.isArray(msgs)?msgs.slice(have):[];
+    for(const m of fresh){
       const d=describe(m);
       const li=document.createElement("li");
       if(d.ok)li.className="ok"; if(d.bad)li.className="bad";
@@ -224,76 +146,28 @@ function monitor(id){
   document.getElementById("mon-id").textContent=id;
   document.getElementById("mon-dash").href="/#/Playground?trace="+encodeURIComponent(id);
   document.getElementById("steps").innerHTML="";
-  const li=document.createElement("li");li.innerHTML='<span class="t"></span><span>🚀 Scenario launched — waiting for first agent output…</span>';
+  const li=document.createElement("li");li.innerHTML='<span class="t"></span><span>🚀 RD-Agent(Q) launched — waiting for first agent output…</span>';
   document.getElementById("steps").appendChild(li);
   if(pollTimer)clearInterval(pollTimer);
   poll(); pollTimer=setInterval(poll,5000);
   document.getElementById("monitor").scrollIntoView({behavior:"smooth"});
 }
 async function launch(fd,btn){
-  if(btn){btn.disabled=true; btn.textContent="Starting…";}
+  const label=btn.dataset.label||btn.textContent;
+  btn.disabled=true; btn.textContent="⏳ Launching…";
   try{
     const r=await fetch("/upload",{method:"POST",body:fd});
     const j=await r.json();
-    if(j&&j.id){monitor(j.id);}else{alert("Failed to start: "+JSON.stringify(j));}
-  }catch(e){alert("Request failed: "+e);}
-  if(btn){btn.disabled=false; btn.textContent=btn.dataset.label;}
+    if(j&&j.id){ monitor(j.id); btn.textContent="▶ Running — watch the live monitor below"; }
+    else { btn.textContent=label; btn.disabled=false; alert("Launch failed: "+JSON.stringify(j)); }
+  }catch(e){ btn.textContent=label; btn.disabled=false; alert("Launch error: "+e); }
 }
 document.querySelectorAll("button.run").forEach(b=>b.dataset.label=b.textContent);
-
-async function bundledPdf(name){
-  const blob=await (await fetch("/examples-assets/"+name)).blob();
-  return new File([blob],name,{type:"application/pdf"});
-}
-// One-click runs with bundled inputs: [button id, scenario, bundled PDF]
-const PDF_RUNS=[
- ["run-vol","General Model Implementation","sample_quant_model.pdf"],
- ["run-gm","General Model Implementation","sample_model_report.pdf"],
- ["run-pa","General Model Implementation","sample_prime_attention.pdf"],
- ["run-chatsfm","General Model Implementation","sample_chatsfm.pdf"],
- ["run-moe","General Model Implementation","sample_stock_moe_experts.pdf"],
- ["run-fr","Finance Data Building (Reports)","sample_factor_report.pdf"],
-];
-for(const [id,scenario,pdf] of PDF_RUNS){
-  document.getElementById(id).onclick=async e=>{
-    const fd=new FormData();
-    fd.append("scenario",scenario);
-    fd.append("files",await bundledPdf(pdf));
-    launch(fd,e.currentTarget);
-  };
-}
-// qlib loop runs: [button id, scenario, loops-input id]
-const LOOP_RUNS=[
- ["run-ff","Finance Data Building","ff-loops"],
- ["run-fq","Finance Whole Pipeline","fq-loops"],
- ["run-lob","LOB Market Making","lob-loops"],
-];
-for(const [id,scenario,loopsId] of LOOP_RUNS){
-  document.getElementById(id).onclick=e=>{
-    const fd=new FormData();
-    fd.append("scenario",scenario);
-    fd.append("loops",document.getElementById(loopsId).value||"1");
-    launch(fd,e.currentTarget);
-  };
-}
-const COMPS=["titanic","jane-street-market-prediction","amex-default-prediction","optiver-realized-volatility-prediction"];
-const cwrap=document.getElementById("comps");
-COMPS.forEach(c=>{
-  const b=document.createElement("button");
-  b.type="button"; b.className="chip"+(c==="titanic"?" sel":""); b.textContent=c;
-  b.onclick=()=>{document.getElementById("ds-comp").value=c;
-    cwrap.querySelectorAll(".chip").forEach(x=>x.classList.remove("sel")); b.classList.add("sel");};
-  cwrap.appendChild(b);
-});
-document.getElementById("run-ds").onclick=e=>{
-  const btn=e.currentTarget;
-  const comp=document.getElementById("ds-comp").value.trim();
-  if(!comp)return alert("Enter a competition name");
+document.getElementById("run-q").onclick=e=>{
   const fd=new FormData();
-  fd.append("scenario","Data Science");
-  fd.append("competition","MLE-Bench:"+comp);
-  const l=document.getElementById("ds-loops").value; if(l)fd.append("loops",l);
-  launch(fd,btn);
+  fd.append("scenario","Finance Whole Pipeline");
+  fd.append("loops",document.getElementById("q-loops").value||"1");
+  launch(fd,e.currentTarget);
 };
 </script>
 </body>

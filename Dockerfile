@@ -1,6 +1,8 @@
 # ============================================================
-# RD-Agent web app — production image
-# Flask log-server + Vue frontend, LLM via Qwen/DashScope (.env)
+# RD-Agent(Q) reproduction — production image (single-task)
+# Reproduces arXiv:2505.15155 (joint factor + model optimization)
+# via the fin_quant loop. Flask log-server + Vue frontend,
+# LLM via Qwen/DashScope (.env).
 # ============================================================
 FROM node:22-alpine AS frontend
 RUN apk add --no-cache git
@@ -19,9 +21,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl \
 RUN pip install uv
 
 RUN git clone --depth 1 https://github.com/microsoft/RD-Agent.git /app/RD-Agent
-# Finance scenarios run inside this container (no conda/docker): patch env selection,
-# qlib data provisioning and memory limits before the package is installed.
-# The patcher loads code snippets from ./injected/ relative to itself.
+# The RD-Agent(Q) fin_quant loop runs inside this container (no conda/docker):
+# patch env selection, qlib data provisioning and memory limits before install,
+# and lock /upload to this one scenario. The patcher loads code snippets from
+# ./injected/ relative to itself.
 COPY web-extras/patch-rdagent.py /tmp/web-extras/patch-rdagent.py
 COPY web-extras/injected/ /tmp/web-extras/injected/
 RUN python3 /tmp/web-extras/patch-rdagent.py /app/RD-Agent
@@ -47,9 +50,8 @@ RUN uv pip install --system pyqlib
 # needs mlflow 2.x; keep this pin until qlib supports mlflow 3.
 RUN uv pip install --system "mlflow==2.22.2"
 
-# Model execution harness (General Model Implementation + fin model/quant steps)
-# imports torch: the CoSTEER runner does `import torch` and calls the generated
-# nn.Module. Use the PyTorch CPU index ONLY - it is self-contained (hosts torch's
+# The fin_quant model step's CoSTEER runner does `import torch` and calls the
+# generated nn.Module. Use the PyTorch CPU index ONLY - it is self-contained (hosts torch's
 # pure-python deps) and resolves torch==<ver>+cpu with no nvidia/CUDA packages.
 # Adding PyPI as an extra index makes uv prefer the multi-GB CUDA build, so it is
 # deliberately omitted (verified via uv pip install --dry-run).
@@ -58,9 +60,8 @@ RUN uv pip install --system torch --index-url https://download.pytorch.org/whl/c
 # Built Vue frontend served by the Flask log server
 COPY --from=frontend /src/git_ignore_folder/static /app/RD-Agent/git_ignore_folder/static
 
-# Quickstart examples page + bundled sample inputs (served from /examples.html)
+# Single-task reproduction page (served from /examples.html)
 COPY web-extras/examples.html git_ignore_folder/static/examples.html
-COPY web-extras/sample_*.pdf git_ignore_folder/static/examples-assets/
 COPY web-extras/add_examples_link.py /tmp/add_examples_link.py
 RUN python3 /tmp/add_examples_link.py git_ignore_folder/static/index.html
 

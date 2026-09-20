@@ -59,18 +59,8 @@ if (!s2.includes(anchorA) || !s2.includes(anchorB) || s2.indexOf(anchorB) !== s2
 
 const defaults =
   "const DEFAULT_USER_INSTRUCTIONS = {\n" +
-  "  \"Finance Data Building\":\n" +
-  "    \"Research and iteratively implement alpha factors for stock selection in the CSI300 universe using daily OHLCV data. Start with volume/price momentum style factors (e.g. volume-weighted momentum over the past 20 trading days). Evaluate each factor by IC/RankIC and a qlib backtest, and keep refining until the factor is stable and profitable.\",\n" +
-  "  \"Finance Data Building (Reports)\":\n" +
-  "    \"Implement the alpha factor(s) described in the uploaded research report (e.g. volume-weighted momentum, VWMOM) for the CSI300 universe. Validate them with qlib backtests and iteratively improve IC/RankIC.\",\n" +
-  "  \"Finance Model Implementation\":\n" +
-  "    \"Implement a stock price prediction model for the CSI300 universe using the provided base factors as features and next-day return as the label. Start with a LightGBM baseline, evaluate with annualized excess return and information ratio from the qlib backtest, and iteratively improve the model.\",\n" +
   "  \"Finance Whole Pipeline\":\n" +
-  "    \"Run the full quant R&D pipeline on the CSI300 universe: alternate between alpha factor engineering and prediction model implementation based on backtest feedback, optimizing annualized excess return and information ratio.\",\n" +
-  "  \"Data Science\":\n" +
-  "    \"Analyze the dataset, perform feature engineering, train and evaluate a predictive model for the target, and iteratively improve the evaluation metric. Start with a simple baseline before trying more complex models.\",\n" +
-  "  \"General Model Implementation\":\n" +
-  "    \"Implement the model described in the uploaded report/documentation. Start with a faithful baseline implementation, evaluate it against the stated metrics, and iteratively improve performance.\",\n" +
+  "    \"Reproduce RD-Agent(Q) (arXiv:2505.15155): jointly optimize alpha factors and the return-forecasting model on the CSI300 universe. Each round, form a hypothesis from quant domain priors, implement factor and model code with Co-STEER, run a qlib backtest, and use the feedback (IC/RankIC, annualized excess return, information ratio, max drawdown) to choose the next research direction. Alternate factor engineering and model improvement, targeting higher annualized return from fewer, higher-quality factors.\",\n" +
   "  _default:\n" +
   "    \"Please carry out the R&D task step by step: start with a simple baseline, evaluate the results, and iteratively improve based on the feedback.\",\n" +
   "};\n" +
@@ -78,7 +68,6 @@ const defaults =
   "  const key = String(name || \"\").trim();\n" +
   "  return DEFAULT_USER_INSTRUCTIONS[key] || DEFAULT_USER_INSTRUCTIONS._default;\n" +
   "};";
-
 s2 = s2.replace(anchorA, anchorA + "\n" + defaults);
 
 const prefill =
