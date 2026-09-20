@@ -41,6 +41,8 @@ SCOPE - this deployment reproduces ONLY RD-Agent(Q) (arXiv:2505.15155): the join
         factor + model co-optimization loop exposed as the "Finance Whole Pipeline"
         scenario (fin_quant). Every other upstream scenario is disabled at /upload.
       P15  log/server/app.py           reject any /upload that is not the RD-Agent(Q) pipeline
+      P16  log/server/app.py           startup banner so the live thinking-flow shows immediately
+      P17  components/workflow/rd_loop.py  bound base-factor qlib validation (was a silent ~1h block)
 
 All patches are strict-match: the build fails loudly if upstream drifts. Large
 injected blocks live as real, lintable Python files in web-extras/injected/;
@@ -394,6 +396,69 @@ patch(
     '(arXiv:2505.15155) only, via the Finance Whole Pipeline scenario."}), 400\n'
     '    files = request.files.getlist("files")',
     "P15 restrict /upload to the RD-Agent(Q) pipeline",
+)
+
+# ---------------------------------------------------------------- P16
+# Emit an immediate stdout line when a task process starts so the dashboard's
+# live "thinking flow" (which tails the run stdout via /progress) shows activity
+# from t=0 instead of a blank panel while slow startup work runs.
+patch(
+    "rdagent/log/server/app.py",
+    "                rdagent_logger.rebind_console_to_current_streams()\n"
+    "                try:",
+    "                rdagent_logger.rebind_console_to_current_streams()\n"
+    "                print(\n"
+    '                    f"[rd-agent] task process started: target={self.target_name} "\n'
+    '                    f"kwargs={sorted(self.kwargs)}",\n'
+    "                    flush=True,\n"
+    "                )\n"
+    "                try:",
+    "P16 startup banner to run stdout",
+)
+
+# ---------------------------------------------------------------- P17
+# Base-factor validation could block the whole run for up to an hour in silence.
+# _init_base_features() runs BEFORE the interactor and before the RDLoop starts;
+# validate_qlib_features() shells out to `timeout --kill-after=10 3600 python
+# test_fea.py`, so an uploaded base_factors.json that is slow (or hangs) left the
+# UI spinning with no trace messages and no thinking-flow output. Log progress and
+# bound the probe to ~180s on a daemon thread; on timeout/failure fall back to the
+# default base features with a clear message.
+patch(
+    "rdagent/components/workflow/rd_loop.py",
+    "        if base_features_path is not None:\n"
+    "            try:",
+    "        if base_features_path is not None:\n"
+    '            print(f"[rd-agent] loading base factors from {base_features_path} ...", flush=True)\n'
+    "            try:",
+    "P17 log base-factor loading",
+)
+patch(
+    "rdagent/components/workflow/rd_loop.py",
+    "                    if validate_qlib_features(list(features.values())):",
+    "                    import threading\n"
+    "\n"
+    "                    _val: dict = {}\n"
+    "\n"
+    "                    def _validate_base_features() -> None:\n"
+    '                        _val["ok"] = validate_qlib_features(list(features.values()))\n'
+    "\n"
+    "                    print(\n"
+    '                        f"[rd-agent] validating {len(features)} base-factor expressions via qlib "\n'
+    '                        "(bounded to 180s) ...",\n'
+    "                        flush=True,\n"
+    "                    )\n"
+    "                    _thr = threading.Thread(target=_validate_base_features, daemon=True)\n"
+    "                    _thr.start()\n"
+    "                    _thr.join(timeout=180)\n"
+    "                    if _thr.is_alive():\n"
+    "                        print(\n"
+    '                            "[rd-agent] base-factor validation timed out; using default base features.",\n'
+    "                            flush=True,\n"
+    "                        )\n"
+    "                    _base_ok = (not _thr.is_alive()) and bool(_val.get(\"ok\", False))\n"
+    "                    if _base_ok:",
+    "P17 bound base-factor validation",
 )
 
 print("All rdagent patches applied.", flush=True)

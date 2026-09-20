@@ -214,3 +214,30 @@ s3 = s3 + activityStyle;
 
 fs.writeFileSync(p2, s3);
 console.log("[patch-frontend] live activity panel applied to PlaygroundPage.vue");
+
+// ------------------------------- single-scenario dropdown (RD-Agent(Q) only)
+// The deployment is scope-locked to the "Finance Whole Pipeline" scenario at
+// /upload, so remove every other entry from the Playground scenario dropdown.
+// Injected BEFORE the scenarioList/scenarioChecked refs are created so the
+// selected scenario, intro panel and loop defaults all match the one scenario.
+const p4 = "/src/web/src/views/Playground.vue";
+let s4 = fs.readFileSync(p4, "utf8");
+const slAnchor = "const scenarioList = ref(visibleContinuousScenarioList);";
+if (!s4.includes(slAnchor)) {
+  console.error("[patch-frontend] FAILED: Playground.vue scenarioList anchor drifted; cannot trim dropdown.");
+  process.exit(1);
+}
+const singleScenario =
+  "// [rd-agent single-purpose] keep only the deployed scenario in the dropdown.\n" +
+  "{\n" +
+  "  const fwp =\n" +
+  "    continuousScenarioList.find((s) => s.name === \"Finance Whole Pipeline\") ||\n" +
+  "    visibleContinuousScenarioList[0];\n" +
+  "  visibleContinuousScenarioList.length = 0;\n" +
+  "  visibleContinuousScenarioList.push(fwp);\n" +
+  "  guidedScenarioList.length = 0;\n" +
+  "  guidedScenarioList.push(fwp);\n" +
+  "}\n";
+s4 = s4.replace(slAnchor, singleScenario + slAnchor);
+fs.writeFileSync(p4, s4);
+console.log("[patch-frontend] single-scenario dropdown applied to Playground.vue");
