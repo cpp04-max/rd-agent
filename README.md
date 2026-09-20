@@ -51,6 +51,23 @@ Everything that is not the RD-Agent(Q) pipeline:
 | `web-extras/examples.html` | The single-task reproduction page (served at `/examples.html`) |
 | `web-extras/add_examples_link.py` | Injects the floating "Reproduce RD-Agent(Q)" button into the built `index.html` |
 
+## Upstream version pin
+
+`microsoft/RD-Agent` is fetched at build time, **pinned to a known-good commit** via the
+`RDAGENT_COMMIT` build ARG in the `Dockerfile` (currently `6762f84`). The build patches are
+strict-match, so an unpinned `main` will eventually drift and break the build (this already
+happened once at the `P11b model.py imports` anchor). To track a newer upstream:
+
+```bash
+# 1. bump the pin
+sed -i 's/^ARG RDAGENT_COMMIT=.*/ARG RDAGENT_COMMIT=<new-sha>/' Dockerfile
+# 2. re-run the patcher against that commit to confirm every anchor still matches
+git init /tmp/rd && git -C /tmp/rd remote add origin https://github.com/microsoft/RD-Agent.git \
+  && git -C /tmp/rd fetch --depth 1 origin <new-sha> && git -C /tmp/rd checkout FETCH_HEAD
+python3 web-extras/patch-rdagent.py /tmp/rd      # must print "All rdagent patches applied."
+# 3. fix any drifted anchors in patch-rdagent.py / patch-frontend.js, then rebuild
+```
+
 ## Deploy to Fly.io
 
 ```bash
