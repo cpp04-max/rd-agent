@@ -114,6 +114,21 @@ const panel =
   "          <span class=\"live-phase\">{{ activityPhase }}</span>\n" +
   "          <span class=\"live-toggle\">{{ activityCollapsed ? '▸ show thinking flow' : '▾ hide thinking flow' }}</span>\n" +
   "        </div>\n" +
+  "        <div class=\"live-prog\">\n" +
+  "          <div class=\"live-prog-row\">\n" +
+  "            <span class=\"live-prog-label\">Loop {{ wfLoop }} · stage {{ wfStepIndex + 1 }}/{{ wfTotal }}</span>\n" +
+  "            <span class=\"live-prog-name\">{{ wfStepName }}</span>\n" +
+  "            <span class=\"live-prog-time\">elapsed {{ fmtDur(wfElapsedSec) }} · stage {{ fmtDur(stageSec(wfStepName)) }} · est. left this loop {{ fmtDur(wfRemainingSec) }}</span>\n" +
+  "          </div>\n" +
+  "          <div class=\"live-bar\"><div class=\"live-bar-fill\" :style=\"{ width: wfPct + '%' }\"></div></div>\n" +
+  "          <div class=\"live-stages\">\n" +
+  "            <div v-for=\"(st, i) in wfStages\" :key=\"st\" class=\"live-stage\" :class=\"stageClass(i)\">\n" +
+  "              <span class=\"live-stage-name\">{{ st }}</span>\n" +
+  "              <span class=\"live-stage-t\">{{ fmtDur(stageSec(st)) }}</span>\n" +
+  "            </div>\n" +
+  "          </div>\n" +
+  "          <div class=\"live-prog-note\">≈ {{ fmtDur(wfPerLoopSec) }} per loop · multiply by your loop count for a rough total</div>\n" +
+  "        </div>\n" +
   "        <pre class=\"live-log\" v-show=\"!activityCollapsed\" ref=\"activityLogEl\">{{ activityText }}</pre>\n" +
   "      </div>\n";
 
@@ -128,6 +143,71 @@ const activityCode =
   "let activityOffset = 0;\n" +
   "let activityTimer = null;\n" +
   "let activityLastTraceId = \"\";\n" +
+  "\n" +
+  "// ---- workflow progress / ETA state (parsed from the backend tqdm lines) ----\n" +
+  "const wfStages = [\"direct_exp_gen\", \"coding\", \"running\", \"feedback\", \"record\"];\n" +
+  "const wfLoop = ref(0);\n" +
+  "const wfStepIndex = ref(0);\n" +
+  "const wfTotal = ref(wfStages.length);\n" +
+  "const wfStepName = ref(wfStages[0]);\n" +
+  "const wfPct = ref(0);\n" +
+  "const wfElapsedSec = ref(0);\n" +
+  "const wfRemainingSec = ref(0);\n" +
+  "const wfPerLoopSec = ref(0);\n" +
+  "const wfStageStart = {};\n" +
+  "const wfStageDone = {};\n" +
+  "let wfCurStage = \"\";\n" +
+  "let wfCurLoop = -1;\n" +
+  "\n" +
+  "const parseDur = (s) => {\n" +
+  "  const p = String(s).split(\":\").map(Number);\n" +
+  "  if (p.length === 3) return p[0] * 3600 + p[1] * 60 + p[2];\n" +
+  "  if (p.length === 2) return p[0] * 60 + p[1];\n" +
+  "  return p[0] || 0;\n" +
+  "};\n" +
+  "const fmtDur = (sec) => {\n" +
+  "  sec = Math.max(0, Math.round(sec || 0));\n" +
+  "  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s2 = sec % 60;\n" +
+  "  return (h ? h + \":\" + String(m).padStart(2, \"0\") : String(m)) + \":\" + String(s2).padStart(2, \"0\");\n" +
+  "};\n" +
+  "const stageSec = (st) => {\n" +
+  "  if (st === wfCurStage) return Math.max(0, (wfElapsedSec.value || 0) - (wfStageStart[st] || 0));\n" +
+  "  return wfStageDone[st] || 0;\n" +
+  "};\n" +
+  "const stageClass = (i) => {\n" +
+  "  const st = wfStages[i];\n" +
+  "  if (st === wfCurStage) return \"active\";\n" +
+  "  return i < wfStages.indexOf(wfCurStage) ? \"done\" : \"todo\";\n" +
+  "};\n" +
+  "const resetWf = () => {\n" +
+  "  wfCurLoop = -1; wfCurStage = \"\";\n" +
+  "  for (const k of Object.keys(wfStageStart)) delete wfStageStart[k];\n" +
+  "  for (const k of Object.keys(wfStageDone)) delete wfStageDone[k];\n" +
+  "  wfLoop.value = 0; wfStepIndex.value = 0; wfTotal.value = wfStages.length;\n" +
+  "  wfStepName.value = wfStages[0]; wfPct.value = 0;\n" +
+  "  wfElapsedSec.value = 0; wfRemainingSec.value = 0; wfPerLoopSec.value = 0;\n" +
+  "};\n" +
+  "const WF_RE = /Workflow Progress:\\s*(\\d+)%\\|[^|]*\\|\\s*(\\d+)\\/(\\d+)\\s*\\[([0-9:]+)<([0-9:]+),\\s*[^,]+,\\s*loop_index=(\\d+),\\s*step_index=(\\d+),\\s*step_name=([^\\],]+)/;\n" +
+  "const ingestProgress = (text) => {\n" +
+  "  for (const ln of String(text || \"\").split(\"\\n\")) {\n" +
+  "    const m = WF_RE.exec(ln);\n" +
+  "    if (!m) continue;\n" +
+  "    const pct = +m[1], total = +m[3], el = parseDur(m[4]), rem = parseDur(m[5]);\n" +
+  "    const loop = +m[6], sidx = +m[7], sname = m[8].trim();\n" +
+  "    if (loop !== wfCurLoop) {\n" +
+  "      wfCurLoop = loop; wfCurStage = \"\";\n" +
+  "      for (const k of Object.keys(wfStageStart)) delete wfStageStart[k];\n" +
+  "      for (const k of Object.keys(wfStageDone)) delete wfStageDone[k];\n" +
+  "    }\n" +
+  "    if (sname !== wfCurStage) {\n" +
+  "      if (wfCurStage) wfStageDone[wfCurStage] = Math.max(0, el - (wfStageStart[wfCurStage] || 0));\n" +
+  "      wfCurStage = sname; wfStageStart[sname] = el;\n" +
+  "    }\n" +
+  "    wfLoop.value = loop; wfStepIndex.value = sidx; wfTotal.value = total; wfStepName.value = sname;\n" +
+  "    wfPct.value = pct; wfElapsedSec.value = el; wfRemainingSec.value = rem;\n" +
+  "    if (loop > 0) wfPerLoopSec.value = el / loop;\n" +
+  "  }\n" +
+  "};\n" +
   "\n" +
   "const activityPhaseFromLine = (line) => {\n" +
   "  const t = String(line || \"\");\n" +
@@ -158,6 +238,7 @@ const activityCode =
   "    activityOffset = 0;\n" +
   "    activityRunning.value = true;\n" +
   "    activityPhase.value = \"starting…\";\n" +
+  "    resetWf();\n" +
   "  }\n" +
   "  fetch(`/progress?id=${encodeURIComponent(activityTraceId)}&offset=${activityOffset}`)\n" +
   "    .then((r) => (r.ok ? r.json() : null))\n" +
@@ -166,6 +247,7 @@ const activityCode =
   "      if (typeof j.offset === \"number\") activityOffset = j.offset;\n" +
   "      if (j.text) {\n" +
   "        activityText.value += j.text;\n" +
+  "        ingestProgress(j.text);\n" +
   "        const lines = activityText.value.split(\"\\n\");\n" +
   "        if (lines.length > 400) {\n" +
   "          activityText.value = lines.slice(-400).join(\"\\n\");\n" +
@@ -207,6 +289,21 @@ const activityStyle =
   ".live-title { font-weight: 600; flex: 0 0 auto; }\n" +
   ".live-phase { color: #475569; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1 1 auto; }\n" +
   ".live-toggle { color: #1677ff; flex: 0 0 auto; font-size: 12px; }\n" +
+  ".live-prog { padding: 8px 12px 10px; border-bottom: 1px solid #e6edf7; background: #fff; }\n" +
+  ".live-prog-row { display: flex; gap: 10px; align-items: baseline; font-size: 12px; color: #334155; flex-wrap: wrap; }\n" +
+  ".live-prog-label { font-weight: 600; }\n" +
+  ".live-prog-name { color: #1677ff; font-weight: 600; }\n" +
+  ".live-prog-time { color: #64748b; margin-left: auto; font-variant-numeric: tabular-nums; }\n" +
+  ".live-bar { height: 8px; background: #e6edf7; border-radius: 999px; overflow: hidden; margin: 6px 0 8px; }\n" +
+  ".live-bar-fill { height: 100%; background: linear-gradient(90deg, #1677ff, #4f9cff); width: 0%; transition: width .4s ease; }\n" +
+  ".live-stages { display: flex; gap: 6px; flex-wrap: wrap; }\n" +
+  ".live-stage { border: 1px solid #e2e8f0; border-radius: 8px; padding: 3px 8px; font-size: 11px; color: #64748b; background: #f8fafc; display: flex; gap: 6px; align-items: center; }\n" +
+  ".live-stage .live-stage-t { font-variant-numeric: tabular-nums; color: #94a3b8; }\n" +
+  ".live-stage.done { background: #eefaf1; border-color: #bbe7c8; color: #15803d; }\n" +
+  ".live-stage.done .live-stage-t { color: #15803d; }\n" +
+  ".live-stage.active { background: #eef4ff; border-color: #bcd4ff; color: #123a6d; font-weight: 600; }\n" +
+  ".live-stage.active .live-stage-t { color: #123a6d; }\n" +
+  ".live-prog-note { margin-top: 6px; font-size: 11px; color: #94a3b8; }\n" +
   ".live-log { margin: 0; padding: 8px 12px; max-height: 190px; overflow: auto; background: #0f172a; color: #c8e6c9; font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }\n" +
   "</style>\n";
 
