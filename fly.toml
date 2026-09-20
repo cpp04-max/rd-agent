@@ -32,6 +32,9 @@ primary_region = 'lax'
   destination = "/data"
 
 [[vm]]
-  cpu_kind = 'shared'
-  cpus = 1
-  memory_mb = 2048
+  # Sized for the RD-Agent(Q) qlib/LightGBM backtests: dedicated cores (no noisy
+  # neighbour) let LightGBM/pandas parallelise; 4 GB removes the OOM cliff on CSI300.
+  # No GPU is needed - all LLM inference is remote (DashScope) and training is CPU.
+  cpu_kind = 'performance'
+  cpus = 2
+  memory_mb = 4096

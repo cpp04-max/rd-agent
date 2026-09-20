@@ -134,6 +134,31 @@ const panel =
 
 s3 = s3.replace(anchorC, anchorC + "\n" + panel);
 
+// Show live progress + ETA inside the "User Interaction Required" waiting state so a
+// long (but healthy) wait is transparent and it never looks like a dead spinner.
+const waitingOld =
+  "          <div class=\"interaction-waiting\">\n" +
+  "            <span class=\"interaction-waiting-spinner\" aria-hidden=\"true\"></span>\n" +
+  "            <span>R&amp;D-Agent is generating hypothesis</span>\n" +
+  "          </div>\n";
+const waitingNew =
+  "          <div class=\"interaction-waiting\">\n" +
+  "            <span class=\"interaction-waiting-spinner\" aria-hidden=\"true\"></span>\n" +
+  "            <span>R&amp;D-Agent is working — {{ activityPhase }}</span>\n" +
+  "          </div>\n" +
+  "          <div class=\"interaction-waiting-prog\">\n" +
+  "            <div class=\"live-prog-row\">\n" +
+  "              <span class=\"live-prog-label\">Loop {{ wfLoop }} · stage {{ wfStepIndex + 1 }}/{{ wfTotal }} · {{ wfStepName }}</span>\n" +
+  "              <span class=\"live-prog-time\">elapsed {{ fmtDur(wfElapsedSec) }} · est. left {{ fmtDur(wfRemainingSec) }}</span>\n" +
+  "            </div>\n" +
+  "            <div class=\"live-bar\"><div class=\"live-bar-fill\" :style=\"{ width: wfPct + '%' }\"></div></div>\n" +
+  "          </div>\n";
+if (s3.includes(waitingOld)) {
+  s3 = s3.replace(waitingOld, waitingNew);
+} else {
+  console.warn("[patch-frontend] WARN: interaction-waiting block drifted; progress-in-dialog skipped.");
+}
+
 const activityCode =
   "const activityText = ref(\"\");\n" +
   "const activityPhase = ref(\"starting…\");\n" +
@@ -263,7 +288,8 @@ const activityCode =
   "      }\n" +
   "      if (j.alive === false) {\n" +
   "        activityRunning.value = false;\n" +
-  "        if (!activityText.value) activityPhase.value = \"run finished (no captured output)\";\n" +
+  "        userInteractionWaitingHypothesis.value = false;\n" +
+  "        activityPhase.value = activityText.value ? \"run ended\" : \"run finished (no captured output)\";\n" +
   "        return;\n" +
   "      }\n" +
   "      activityRunning.value = true;\n" +
@@ -304,6 +330,7 @@ const activityStyle =
   ".live-stage.active { background: #eef4ff; border-color: #bcd4ff; color: #123a6d; font-weight: 600; }\n" +
   ".live-stage.active .live-stage-t { color: #123a6d; }\n" +
   ".live-prog-note { margin-top: 6px; font-size: 11px; color: #94a3b8; }\n" +
+  ".interaction-waiting-prog { padding: 4px 0 8px; }\n" +
   ".live-log { margin: 0; padding: 8px 12px; max-height: 190px; overflow: auto; background: #0f172a; color: #c8e6c9; font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }\n" +
   "</style>\n";
 
