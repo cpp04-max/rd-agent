@@ -216,28 +216,38 @@ fs.writeFileSync(p2, s3);
 console.log("[patch-frontend] live activity panel applied to PlaygroundPage.vue");
 
 // ------------------------------- single-scenario dropdown (RD-Agent(Q) only)
-// The deployment is scope-locked to the "Finance Whole Pipeline" scenario at
-// /upload, so remove every other entry from the Playground scenario dropdown.
-// Injected BEFORE the scenarioList/scenarioChecked refs are created so the
-// selected scenario, intro panel and loop defaults all match the one scenario.
+// The deployment is scope-locked to "Finance Whole Pipeline" at /upload, so rewrite
+// the SOURCE scenario lists (not just runtime arrays) so the built bundle's
+// Playground dropdown genuinely contains only that one scenario on both tabs.
 const p4 = "/src/web/src/views/Playground.vue";
 let s4 = fs.readFileSync(p4, "utf8");
-const slAnchor = "const scenarioList = ref(visibleContinuousScenarioList);";
-if (!s4.includes(slAnchor)) {
-  console.error("[patch-frontend] FAILED: Playground.vue scenarioList anchor drifted; cannot trim dropdown.");
+
+const filterOld =
+  "const visibleContinuousScenarioList = continuousScenarioList.filter(\n" +
+  '  (scenario) => scenario.name !== "Data Science"\n' +
+  ");";
+const filterNew =
+  "const visibleContinuousScenarioList = continuousScenarioList.filter(\n" +
+  '  (scenario) => scenario.name === "Finance Whole Pipeline"\n' +
+  ");";
+if (!s4.includes(filterOld)) {
+  console.error("[patch-frontend] FAILED: visibleContinuousScenarioList filter anchor drifted.");
   process.exit(1);
 }
-const singleScenario =
-  "// [rd-agent single-purpose] keep only the deployed scenario in the dropdown.\n" +
-  "{\n" +
-  "  const fwp =\n" +
-  "    continuousScenarioList.find((s) => s.name === \"Finance Whole Pipeline\") ||\n" +
-  "    visibleContinuousScenarioList[0];\n" +
-  "  visibleContinuousScenarioList.length = 0;\n" +
-  "  visibleContinuousScenarioList.push(fwp);\n" +
-  "  guidedScenarioList.length = 0;\n" +
-  "  guidedScenarioList.push(fwp);\n" +
-  "}\n";
-s4 = s4.replace(slAnchor, singleScenario + slAnchor);
+s4 = s4.replace(filterOld, filterNew);
+
+// Replace the whole guidedScenarioList literal with a copy of the (now single-entry)
+// continuous list, so the second tab shows the same one scenario.
+const gStart = s4.indexOf("const guidedScenarioList = [");
+const sRef = s4.indexOf("const scenarioList = ref(visibleContinuousScenarioList);");
+if (gStart === -1 || sRef === -1 || gStart > sRef) {
+  console.error("[patch-frontend] FAILED: guidedScenarioList/scenarioList anchors drifted.");
+  process.exit(1);
+}
+s4 =
+  s4.slice(0, gStart) +
+  "const guidedScenarioList = [...visibleContinuousScenarioList];\n\n" +
+  s4.slice(sRef);
+
 fs.writeFileSync(p4, s4);
-console.log("[patch-frontend] single-scenario dropdown applied to Playground.vue");
+console.log("[patch-frontend] single-scenario dropdown (source-level) applied to Playground.vue");
