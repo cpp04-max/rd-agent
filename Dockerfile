@@ -4,9 +4,18 @@
 # via the fin_quant loop. Flask log-server + Vue frontend,
 # LLM via Qwen/DashScope (.env).
 # ============================================================
+# Pin upstream RD-Agent to a known-good commit. An unpinned `main` drifts and breaks
+# the strict-match patcher / frontend anchors (this build failed at P11b model.py
+# imports when upstream changed). 6762f84 is the commit this image was tested against.
+ARG RDAGENT_COMMIT=6762f84f9bc0f5c6486c50a00e128a57ac6c3683
+
 FROM node:22-alpine AS frontend
+ARG RDAGENT_COMMIT
 RUN apk add --no-cache git
-RUN git clone --depth 1 https://github.com/microsoft/RD-Agent.git /src
+RUN git init -q /src \
+ && git -C /src remote add origin https://github.com/microsoft/RD-Agent.git \
+ && git -C /src fetch -q --depth 1 origin "$RDAGENT_COMMIT" \
+ && git -C /src checkout -q FETCH_HEAD
 # Deep-link support: /#/Playground?trace=<id> opens a specific run in the dashboard
 COPY web-extras/patch-frontend.js /tmp/patch-frontend.js
 RUN node /tmp/patch-frontend.js
@@ -15,12 +24,16 @@ RUN npm install --legacy-peer-deps --no-audit --no-fund \
  && npm run build:flask           # outputs to /src/git_ignore_folder/static
 
 FROM python:3.10-slim
+ARG RDAGENT_COMMIT
 ENV PIP_NO_CACHE_DIR=1 PYTHONUNBUFFERED=1
 RUN apt-get update && apt-get install -y --no-install-recommends git curl \
  && rm -rf /var/lib/apt/lists/*
 RUN pip install uv
 
-RUN git clone --depth 1 https://github.com/microsoft/RD-Agent.git /app/RD-Agent
+RUN git init -q /app/RD-Agent \
+ && git -C /app/RD-Agent remote add origin https://github.com/microsoft/RD-Agent.git \
+ && git -C /app/RD-Agent fetch -q --depth 1 origin "$RDAGENT_COMMIT" \
+ && git -C /app/RD-Agent checkout -q FETCH_HEAD
 # The RD-Agent(Q) fin_quant loop runs inside this container (no conda/docker):
 # patch env selection, qlib data provisioning and memory limits before install,
 # and lock /upload to this one scenario. The patcher loads code snippets from
