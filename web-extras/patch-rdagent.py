@@ -491,4 +491,72 @@ patch(
     "P18 use crash-capturing wrapper as process target",
 )
 
+# ---------------------------------------------------------------- P19
+# Harden the initial-parameter interaction (the step that was hanging at
+# "Waiting for user interaction on initial parameters..."): log each request /
+# response with payload keys, refuse to consume a mismatched payload as the
+# instruction answer (re-ask instead), and fix the inverted feature_codes
+# condition that could KeyError / mis-append the base-factor note.
+patch(
+    "rdagent/components/workflow/rd_loop.py",
+    "            self.user_request_q.put(\n"
+    "                {\n"
+    '                    "user_instruction": None,\n'
+    "                }\n"
+    "            )\n"
+    "            res_dict = self.user_response_q.get()",
+    "            self.user_request_q.put(\n"
+    "                {\n"
+    '                    "user_instruction": None,\n'
+    "                }\n"
+    "            )\n"
+    '            logger.info("Sent user-instruction request; blocking on the response queue...")\n'
+    "            res_dict = self.user_response_q.get()",
+    "P19 log instruction request",
+)
+patch(
+    "rdagent/components/workflow/rd_loop.py",
+    '            logger.info("Received user instruction response.")\n'
+    "            self.plan.update(res_dict)\n"
+    "\n"
+    '            if "feature_codes" not in self.plan:\n'
+    "                self.plan[\n"
+    '                    "user_instruction"\n'
+    "                ] += f\"\\n\\n{str(list(self.plan['feature_codes'].keys()))} has been configured as the base factor; do not generate duplicate factors.\"",
+    "            logger.info(\n"
+    '                "Received user instruction response with keys="\n'
+    "                f\"{sorted(res_dict) if isinstance(res_dict, dict) else type(res_dict).__name__}.\"\n"
+    "            )\n"
+    '            if not isinstance(res_dict, dict) or "user_instruction" not in res_dict:\n'
+    "                logger.warning(\n"
+    '                    "Unexpected initial-parameter payload; re-requesting user instruction."\n'
+    "                )\n"
+    '                self.user_request_q.put({"user_instruction": None})\n'
+    "                res_dict = self.user_response_q.get()\n"
+    "            if isinstance(res_dict, dict):\n"
+    "                self.plan.update(res_dict)\n"
+    "            if self.plan.get(\"feature_codes\"):\n"
+    '                self.plan["user_instruction"] = str(\n'
+    '                    self.plan.get("user_instruction", "")\n'
+    "                ) + f\"\\n\\n{str(list(self.plan['feature_codes'].keys()))} has been configured as the base factor; do not generate duplicate factors.\"",
+    "P19 robust instruction response handling",
+)
+
+# ---------------------------------------------------------------- P20
+# Never fabricate a decoy task when submitting a user response: enqueuing into a
+# fresh queue nobody reads silently drops the answer and hangs the run at its
+# next blocking get(), while the frontend (got 200) advances to the next dialog.
+patch(
+    "rdagent/log/server/app.py",
+    "    trace_id = str(log_folder_path / trace_id)\n"
+    "    task = _get_or_create_task(trace_id)",
+    "    trace_id = str(log_folder_path / trace_id)\n"
+    "    task = rdagent_processes.get(trace_id)\n"
+    "    if task is None:\n"
+    "        return jsonify(\n"
+    '            {"error": "No running task for this trace; the run may have ended."}\n'
+    "        ), 404",
+    "P20 reject user-response submit for unknown trace",
+)
+
 print("All rdagent patches applied.", flush=True)
