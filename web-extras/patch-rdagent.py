@@ -492,54 +492,20 @@ patch(
 )
 
 # ---------------------------------------------------------------- P19
-# Harden the initial-parameter interaction (the step that was hanging at
-# "Waiting for user interaction on initial parameters..."): log each request /
-# response with payload keys, refuse to consume a mismatched payload as the
-# instruction answer (re-ask instead), and fix the inverted feature_codes
-# condition that could KeyError / mis-append the base-factor note.
+# Make the initial-parameter interaction incapable of silent infinite blocking.
+# Previously a lost/mismatched answer parked the run forever on a blocking
+# queue get() at "Waiting for user interaction on initial parameters...". Now
+# every request is (re)sent with a bounded wait; on timeout it logs a warning and
+# re-requests (which also re-surfaces the dialog in the UI via a new trace
+# message). Also fixes the inverted feature_codes condition and logs payload keys.
+# RDAGENT_ASK_TIMEOUT (seconds, default 600) bounds each wait.
+_RD_LOOP_OLD = '    def _interact_init_params(self) -> None:\n        if not (hasattr(self, "user_request_q") and hasattr(self, "user_response_q")):\n            return\n\n        logger.info("Waiting for user interaction on initial parameters...")\n        try:\n            self.user_request_q.put(\n                {\n                    "user_instruction": None,\n                }\n            )\n            res_dict = self.user_response_q.get()\n            logger.info("Received user instruction response.")\n            self.plan.update(res_dict)\n\n            if "feature_codes" not in self.plan:\n                self.plan[\n                    "user_instruction"\n                ] += f"\\n\\n{str(list(self.plan[\'feature_codes\'].keys()))} has been configured as the base factor; do not generate duplicate factors."\n            fea_valid_msg = ""\n            while True:\n                logger.info("Requesting base feature configuration from user.")\n                self.user_request_q.put(\n                    {\n                        "features": self.plan["features"],\n                        "feature_validation_msg": fea_valid_msg,\n                    }\n                )\n                self.plan["features"] = self.user_response_q.get()\n                logger.info("Received base feature configuration response.")\n                if validate_qlib_features(list(self.plan["features"].values())):\n                    logger.info(f"Base feature validation passed. {len(self.plan[\'features\'])} features selected.")\n                    break\n                else:\n                    logger.info("Base feature validation failed. Asking user to revise.")\n                    fea_valid_msg = "Some features are invalid, please revise."\n\n        except (EOFError, OSError):\n            logger.info("User interaction failed, using default initial parameters.")\n            return\n        logger.info("Received user interaction on initial parameters.")'
+_RD_LOOP_NEW = '    def _interact_init_params(self) -> None:\n        if not (hasattr(self, "user_request_q") and hasattr(self, "user_response_q")):\n            return\n\n        import os\n        import queue as _queue\n\n        _ask_timeout = int(os.environ.get("RDAGENT_ASK_TIMEOUT", "600"))\n\n        def _ask(payload, what):\n            while True:\n                self.user_request_q.put(payload)\n                logger.info(f"Sent {what} request; waiting up to {_ask_timeout}s for a response...")\n                try:\n                    res = self.user_response_q.get(timeout=_ask_timeout)\n                except _queue.Empty:\n                    logger.warning(f"No {what} response within {_ask_timeout}s; re-requesting.")\n                    continue\n                logger.info(\n                    f"Received {what} response with keys="\n                    f"{sorted(res) if isinstance(res, dict) else type(res).__name__}."\n                )\n                return res\n\n        logger.info("Waiting for user interaction on initial parameters...")\n        try:\n            res_dict = _ask({"user_instruction": None}, "user-instruction")\n            if not isinstance(res_dict, dict) or "user_instruction" not in res_dict:\n                logger.warning("Unexpected initial-parameter payload; re-requesting user instruction.")\n                res_dict = _ask({"user_instruction": None}, "user-instruction")\n            if isinstance(res_dict, dict):\n                self.plan.update(res_dict)\n            if self.plan.get("feature_codes"):\n                self.plan["user_instruction"] = str(self.plan.get("user_instruction", "")) + (\n                    f"\\n\\n{str(list(self.plan[\'feature_codes\'].keys()))} has been configured as the base factor; do not generate duplicate factors."\n                )\n            fea_valid_msg = ""\n            while True:\n                self.plan["features"] = _ask(\n                    {"features": self.plan["features"], "feature_validation_msg": fea_valid_msg},\n                    "base-feature-configuration",\n                )\n                if validate_qlib_features(list(self.plan["features"].values())):\n                    logger.info(f"Base feature validation passed. {len(self.plan[\'features\'])} features selected.")\n                    break\n                logger.info("Base feature validation failed. Asking user to revise.")\n                fea_valid_msg = "Some features are invalid, please revise."\n\n        except (EOFError, OSError):\n            logger.info("User interaction failed, using default initial parameters.")\n            return\n        logger.info("Received user interaction on initial parameters.")'
 patch(
     "rdagent/components/workflow/rd_loop.py",
-    "            self.user_request_q.put(\n"
-    "                {\n"
-    '                    "user_instruction": None,\n'
-    "                }\n"
-    "            )\n"
-    "            res_dict = self.user_response_q.get()",
-    "            self.user_request_q.put(\n"
-    "                {\n"
-    '                    "user_instruction": None,\n'
-    "                }\n"
-    "            )\n"
-    '            logger.info("Sent user-instruction request; blocking on the response queue...")\n'
-    "            res_dict = self.user_response_q.get()",
-    "P19 log instruction request",
-)
-patch(
-    "rdagent/components/workflow/rd_loop.py",
-    '            logger.info("Received user instruction response.")\n'
-    "            self.plan.update(res_dict)\n"
-    "\n"
-    '            if "feature_codes" not in self.plan:\n'
-    "                self.plan[\n"
-    '                    "user_instruction"\n'
-    "                ] += f\"\\n\\n{str(list(self.plan['feature_codes'].keys()))} has been configured as the base factor; do not generate duplicate factors.\"",
-    "            logger.info(\n"
-    '                "Received user instruction response with keys="\n'
-    "                f\"{sorted(res_dict) if isinstance(res_dict, dict) else type(res_dict).__name__}.\"\n"
-    "            )\n"
-    '            if not isinstance(res_dict, dict) or "user_instruction" not in res_dict:\n'
-    "                logger.warning(\n"
-    '                    "Unexpected initial-parameter payload; re-requesting user instruction."\n'
-    "                )\n"
-    '                self.user_request_q.put({"user_instruction": None})\n'
-    "                res_dict = self.user_response_q.get()\n"
-    "            if isinstance(res_dict, dict):\n"
-    "                self.plan.update(res_dict)\n"
-    "            if self.plan.get(\"feature_codes\"):\n"
-    '                self.plan["user_instruction"] = str(\n'
-    '                    self.plan.get("user_instruction", "")\n'
-    "                ) + f\"\\n\\n{str(list(self.plan['feature_codes'].keys()))} has been configured as the base factor; do not generate duplicate factors.\"",
-    "P19 robust instruction response handling",
+    _RD_LOOP_OLD,
+    _RD_LOOP_NEW,
+    "P19 bounded re-asking initial-parameter interaction",
 )
 
 # ---------------------------------------------------------------- P20
