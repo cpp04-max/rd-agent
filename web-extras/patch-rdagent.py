@@ -586,4 +586,54 @@ patch(
     "P24 disable ANSI log colors off-TTY",
 )
 
+# ---------------------------------------------------------------- P25
+# The qlib workflow templates hardcode n_jobs: 20, which makes qlib spawn 20
+# DataLoader workers on a 2-vCPU machine (torch warns it may run slow or freeze).
+# Cap to 2 to match the VM; training becomes stable and usually faster.
+for _yaml in (
+    "rdagent/scenarios/qlib/experiment/factor_template/conf_combined_factors_sota_model.yaml",
+    "rdagent/scenarios/qlib/experiment/model_template/conf_sota_factors_model.yaml",
+    "rdagent/scenarios/qlib/experiment/model_template/conf_baseline_factors_model.yaml",
+):
+    patch(_yaml, "            n_jobs: 20", "            n_jobs: 2", f"P25 cap n_jobs in {_yaml.split('/')[-1]}")
+
+# ---------------------------------------------------------------- P26
+# LLM-proposed training hyperparameters default to n_epochs=100; at ~minutes per
+# CPU epoch a single model can eat the whole 6h loop timer. Clamp with the
+# RDAGENT_MAX_EPOCHS env var (default 100 = unchanged) so ops can bound run cost.
+patch(
+    "rdagent/scenarios/qlib/developer/model_runner.py",
+    "import pandas as pd",
+    "import os\n\nimport pandas as pd",
+    "P26 import os in model_runner",
+)
+patch(
+    "rdagent/scenarios/qlib/developer/model_runner.py",
+    '                    "n_epochs": str(training_hyperparameters.get("n_epochs", "100")),',
+    '                    "n_epochs": str(\n'
+    '                        min(\n'
+    '                            int(training_hyperparameters.get("n_epochs", "100")),\n'
+    '                            int(os.environ.get("RDAGENT_MAX_EPOCHS", "100")),\n'
+    "                        )\n"
+    "                    ),",
+    "P26 clamp n_epochs in model_runner",
+)
+patch(
+    "rdagent/scenarios/qlib/developer/factor_runner.py",
+    "from pathlib import Path",
+    "import os\nfrom pathlib import Path",
+    "P26 import os in factor_runner",
+)
+patch(
+    "rdagent/scenarios/qlib/developer/factor_runner.py",
+    '                    "n_epochs": str(sota_training_hyperparameters.get("n_epochs", "100")),',
+    '                    "n_epochs": str(\n'
+    '                        min(\n'
+    '                            int(sota_training_hyperparameters.get("n_epochs", "100")),\n'
+    '                            int(os.environ.get("RDAGENT_MAX_EPOCHS", "100")),\n'
+    "                        )\n"
+    "                    ),",
+    "P26 clamp n_epochs in factor_runner",
+)
+
 print("All rdagent patches applied.", flush=True)

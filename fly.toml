@@ -33,6 +33,15 @@ primary_region = 'lax'
   INVITE_STORE = "/data/invites.json"
   UI_TRACE_FOLDER = "/data/traces"
   RDAGENT_QLIB_UNIVERSE = "csi300"
+  # Bound CPU model training so one model can't eat the whole 6h loop timer
+  # (LLM-proposed n_epochs defaults to 100; ~minutes/epoch on CPU). Tunable.
+  RDAGENT_MAX_EPOCHS = "30"
+  # Persist CoSTEER knowledge across runs/deployments on the /data volume so
+  # later loops reuse learned implementation knowledge instead of re-evolving.
+  FACTOR_CoSTEER_knowledge_base_path = "/data/costeer/factor_kb.pkl"
+  FACTOR_CoSTEER_new_knowledge_base_path = "/data/costeer/factor_kb.pkl"
+  MODEL_CoSTEER_knowledge_base_path = "/data/costeer/model_kb.pkl"
+  MODEL_CoSTEER_new_knowledge_base_path = "/data/costeer/model_kb.pkl"
 
 # NOTE: keep exactly ONE machine for this app. A Fly volume attaches to a single
 # machine; a second machine can never mount /data and will fail its health checks,
