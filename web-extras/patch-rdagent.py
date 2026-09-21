@@ -636,4 +636,19 @@ patch(
     "P26 clamp n_epochs in factor_runner",
 )
 
+# ---------------------------------------------------------------- P27
+# Never start a loop the remaining timer cannot finish. Previously a new loop began
+# with e.g. 41 min left, ran past the budget and died mid-step, so the run ended with
+# an incomplete final loop and the dashboard showed no usable result for it. Now the
+# loop terminates cleanly at the boundary (results of completed loops are kept and the
+# server logs END). Tunable via RDAGENT_MIN_LOOP_SECONDS (default 3600).
+_LOOPGUARD_OLD = '            else:\n                logger.info(f"Timer remaining time: {self.timer.remain_time()}")\n'
+_LOOPGUARD_NEW = '            else:\n                logger.info(f"Timer remaining time: {self.timer.remain_time()}")\n                # Don\'t start a loop we cannot finish: beginning a new loop with\n                # less than RDAGENT_MIN_LOOP_SECONDS left guarantees a doomed loop\n                # whose partial work is discarded and which ends mid-step, leaving the\n                # dashboard with an incomplete run and no usable result.\n                _min_loop_s = int(os.environ.get("RDAGENT_MIN_LOOP_SECONDS", "3600"))\n                if (\n                    loop_id is not None\n                    and step_id == 0\n                    and loop_id > 0\n                    and self.timer.remain_time().total_seconds() < _min_loop_s\n                ):\n                    logger.warning(\n                        f"Only {self.timer.remain_time()} left (< {_min_loop_s}s); not "\n                        "starting another loop - finishing with the completed loops."\n                    )\n                    raise self.LoopTerminationError("Insufficient time for another loop")\n'
+patch(
+    "rdagent/utils/workflow/loop.py",
+    _LOOPGUARD_OLD,
+    _LOOPGUARD_NEW,
+    "P27 skip loops that cannot finish in the remaining timer",
+)
+
 print("All rdagent patches applied.", flush=True)
