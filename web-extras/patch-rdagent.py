@@ -547,4 +547,18 @@ patch(
     "P21 bounded feedback interaction",
 )
 
+# ---------------------------------------------------------------- P22
+# Fail fast on LLM authentication errors. A rejected API key used to burn all 10
+# retries and surface as a generic "Failed to create chat completion after 10
+# retries", hiding the real cause. Detect auth failures and raise immediately
+# with an actionable stdout line the live panel shows at once.
+_AUTH_OLD = '            except Exception as e:  # noqa: BLE001\n'
+_AUTH_NEW = '            except Exception as e:  # noqa: BLE001\n                _err_text = str(e)\n                if (\n                    "AuthenticationError" in _err_text\n                    or "Incorrect API key" in _err_text\n                    or "invalid api key" in _err_text.lower()\n                ):\n                    print(\n                        "[rd-agent] LLM AUTHENTICATION FAILED: the provider rejected the configured "\n                        "API key. Fix the OPENAI_API_KEY / OPENAI_API_BASE secrets and redeploy; "\n                        "not retrying.",\n                        flush=True,\n                    )\n                    logger.error(\n                        "LLM authentication failed - check OPENAI_API_KEY / OPENAI_API_BASE secrets."\n                    )\n                    raise\n'
+patch(
+    "rdagent/oai/backend/base.py",
+    _AUTH_OLD,
+    _AUTH_NEW,
+    "P22 fail fast on LLM auth errors",
+)
+
 print("All rdagent patches applied.", flush=True)
