@@ -95,6 +95,47 @@ flyctl open        # -> https://rd-agent.fly.dev/examples.html
 
 For **China-region** DashScope accounts use `OPENAI_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1`.
 
+## LLM backend (Qwen / DashScope)
+
+The app calls Qwen through DashScope's **OpenAI-compatible** endpoint, so a normal
+DashScope / Model-Studio API key is all you need. The single most common failure is a
+**key/region mismatch** ("Incorrect API key provided"): a key issued from the China
+console only authenticates on the China endpoint, and an international key only on the
+international endpoint.
+
+| Where the key was issued | `OPENAI_API_BASE` |
+|---|---|
+| China console (dashscope.console.aliyun.com) | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
+| International console (alibabacloud.com Model Studio) | `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` |
+
+**1. Verify the key + endpoint pair before deploying** (from any machine):
+
+```bash
+curl -s https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions \
+  -H "Authorization: Bearer $OPENAI_API_KEY" -H "Content-Type: application/json" \
+  -d '{"model":"qwen3-max","messages":[{"role":"user","content":"ping"}],"max_tokens":5}'
+```
+A JSON `choices[0].message` reply means the pair is good. `invalid_api_key` means wrong
+region or wrong key; `AccessDenied`/`model not found` means that model isn't enabled for
+the account (try `qwen-plus` or `qwen-max`).
+
+**2. Set the secrets** (stored encrypted by Fly; never commit keys to the repo):
+
+```bash
+flyctl secrets set \
+  OPENAI_API_KEY=*** \
+  OPENAI_API_BASE=https://dashscope-intl.aliyuncs.com/compatible-mode/v1 \
+  CHAT_MODEL=openai/qwen3-max \
+  EMBEDDING_MODEL=openai/text-embedding-v4 \
+  REASONING_THINK_RM=true
+```
+`REASONING_THINK_RM=true` strips the `<think>…</think>` block Qwen3 models emit, which the
+JSON-parsing steps require. Setting secrets restarts the machine automatically.
+
+**3. Confirm in the app:** start a 1-loop run; the live activity panel should show the
+first hypothesis within seconds. If authentication is still wrong you now get an
+immediate `[rd-agent] LLM AUTHENTICATION FAILED …` line instead of a 10-retry hang.
+
 ## Local / any Docker host
 
 ```bash
