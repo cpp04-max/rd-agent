@@ -574,4 +574,16 @@ patch(
     "P23 ignore non-boolean values for boolean LLM settings",
 )
 
+# ---------------------------------------------------------------- P24
+# Kill ANSI escape spam in logs ('[96m[0m' runs): LogColors codes are only
+# emitted when stdout is a TTY; in log files/aggregators they are empty strings.
+_LOGCOLORS_OLD = 'class LogColors:\n    """\n    ANSI color codes for use in console output.\n    """\n\n    RED = "\\033[91m"\n    GREEN = "\\033[92m"\n    YELLOW = "\\033[93m"\n    BLUE = "\\033[94m"\n    MAGENTA = "\\033[95m"\n    CYAN = "\\033[96m"\n    WHITE = "\\033[97m"\n    GRAY = "\\033[90m"\n    BLACK = "\\033[30m"\n\n    BOLD = "\\033[1m"\n    ITALIC = "\\033[3m"\n\n    END = "\\033[0m"\n'
+_LOGCOLORS_NEW = 'import sys as _sys\n\n# Colors are only meaningful on a real terminal. In log files / log\n# aggregators they show up as useless escape spam (e.g. long runs of\n# \'[96m[0m\' for empty colored segments), so disable them off-TTY.\n_TTY = bool(getattr(_sys.stdout, "isatty", lambda: False)())\n\n\nclass LogColors:\n    """\n    ANSI color codes for use in console output (empty when not a TTY).\n    """\n\n    RED = "\\033[91m" if _TTY else ""\n    GREEN = "\\033[92m" if _TTY else ""\n    YELLOW = "\\033[93m" if _TTY else ""\n    BLUE = "\\033[94m" if _TTY else ""\n    MAGENTA = "\\033[95m" if _TTY else ""\n    CYAN = "\\033[96m" if _TTY else ""\n    WHITE = "\\033[97m" if _TTY else ""\n    GRAY = "\\033[90m" if _TTY else ""\n    BLACK = "\\033[30m" if _TTY else ""\n\n    BOLD = "\\033[1m" if _TTY else ""\n    ITALIC = "\\033[3m" if _TTY else ""\n\n    END = "\\033[0m" if _TTY else ""\n'
+patch(
+    "rdagent/log/utils/__init__.py",
+    _LOGCOLORS_OLD,
+    _LOGCOLORS_NEW,
+    "P24 disable ANSI log colors off-TTY",
+)
+
 print("All rdagent patches applied.", flush=True)
