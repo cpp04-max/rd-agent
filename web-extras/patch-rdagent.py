@@ -562,4 +562,16 @@ patch(
     "P22 fail fast on LLM auth/quota errors",
 )
 
+# ---------------------------------------------------------------- P23
+# Tolerate malformed boolean env vars (a crossed Fly secret once put an API key into
+# REASONING_THINK_RM, crashing the app at import in a boot loop). Warn + ignore instead.
+_LLMCONF_OLD = 'LLM_SETTINGS = LLMSettings()\n'
+_LLMCONF_NEW = 'import os as _os\n\n# Defensive: a crossed/mistyped Fly secret (e.g. an API key pasted into a boolean\n# setting) made pydantic raise at import and crash-loop the whole machine. Ignore\n# non-boolean values for boolean settings (with a loud warning) instead of dying.\nfor _fname, _ffield in LLMSettings.model_fields.items():\n    if _ffield.annotation is bool:\n        for _variant in (_fname, _fname.upper(), _fname.lower()):\n            _raw = _os.environ.get(_variant)\n            if _raw is not None and _raw.strip().lower() not in {\n                "true", "false", "1", "0", "yes", "no", "on", "off", ""\n            }:\n                print(\n                    f"[rd-agent] WARNING: env {_variant} for boolean setting \'{_fname}\' is not "\n                    "a boolean (looks like a secret or wrong value); ignoring it and using the "\n                    "default. Fix the Fly secret to \'true\' or \'false\'.",\n                    flush=True,\n                )\n                _os.environ.pop(_variant, None)\n\nLLM_SETTINGS = LLMSettings()\n'
+patch(
+    "rdagent/oai/llm_conf.py",
+    _LLMCONF_OLD,
+    _LLMCONF_NEW,
+    "P23 ignore non-boolean values for boolean LLM settings",
+)
+
 print("All rdagent patches applied.", flush=True)
