@@ -12,7 +12,12 @@ primary_region = 'lax'
   internal_port = 19899
   force_https = true
   auto_stop_machines = 'off'
-  min_machines_running = 0
+  # ACTIVE + COLD SPARE pattern: this app is stateful per machine (running tasks in
+  # process memory; invites/traces/qlib data on that machine's own volume), so exactly
+  # ONE machine must serve at a time. Keep the second machine STOPPED as a spare and
+  # stop it again after every deploy. min_machines_running=1 lets Fly revive the active
+  # machine if it dies, without starting the spare.
+  min_machines_running = 1
 
   [[http_service.checks]]
     interval = '30s'
