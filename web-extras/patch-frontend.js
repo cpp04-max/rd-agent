@@ -153,6 +153,15 @@ const waitingNew =
   "            </div>\n" +
   "            <div class=\"live-bar\"><div class=\"live-bar-fill\" :style=\"{ width: wfPct + '%' }\"></div></div>\n" +
   "          </div>\n";
+// Hide the interaction dialog entirely once the run process is dead: a crash logs no
+// END on the path the dialog watches, so the waiting state would otherwise spin forever.
+const dialogBoxOld = "<div class=\"dialog-box\" v-if=\"userInteractionVisible && !userInteractionMinimized\">";
+const dialogBoxNew = "<div class=\"dialog-box\" v-if=\"userInteractionVisible && !userInteractionMinimized && activityRunning\">";
+if (s3.includes(dialogBoxOld)) {
+  s3 = s3.replace(dialogBoxOld, dialogBoxNew);
+} else {
+  console.warn("[patch-frontend] WARN: dialog-box v-if drifted; alive-gate skipped.");
+}
 if (s3.includes(waitingOld)) {
   s3 = s3.replace(waitingOld, waitingNew);
 } else {
@@ -289,6 +298,7 @@ const activityCode =
   "      if (j.alive === false) {\n" +
   "        activityRunning.value = false;\n" +
   "        userInteractionWaitingHypothesis.value = false;\n" +
+  "        userInteractionVisible.value = false;\n" +
   "        activityPhase.value = activityText.value ? \"run ended\" : \"run finished (no captured output)\";\n" +
   "        return;\n" +
   "      }\n" +
