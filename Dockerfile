@@ -28,6 +28,11 @@ ARG RDAGENT_COMMIT
 ENV PIP_NO_CACHE_DIR=1 PYTHONUNBUFFERED=1
 RUN apt-get update && apt-get install -y --no-install-recommends git curl \
  && rm -rf /var/lib/apt/lists/*
+# LightGBM's native library links libgomp.so.1 (GNU OpenMP), which python:3.10-slim
+# does not ship; without it qlib's qrun dies with 'libgomp.so.1: cannot open shared
+# object file' and every model backtest fails.
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+ && rm -rf /var/lib/apt/lists/*
 RUN pip install uv
 
 RUN git init -q /app/RD-Agent \

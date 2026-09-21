@@ -548,17 +548,18 @@ patch(
 )
 
 # ---------------------------------------------------------------- P22
-# Fail fast on LLM authentication errors. A rejected API key used to burn all 10
-# retries and surface as a generic "Failed to create chat completion after 10
-# retries", hiding the real cause. Detect auth failures and raise immediately
-# with an actionable stdout line the live panel shows at once.
+# Fail fast on LLM auth OR quota/billing errors. A rejected key or an exhausted
+# free-tier quota used to burn all 10 retries and surface as a generic
+# "Failed to create chat completion after 10 retries", hiding the real cause.
+# Detect both and raise immediately with an actionable stdout line the live
+# panel shows at once.
 _AUTH_OLD = '            except Exception as e:  # noqa: BLE001\n'
-_AUTH_NEW = '            except Exception as e:  # noqa: BLE001\n                _err_text = str(e)\n                if (\n                    "AuthenticationError" in _err_text\n                    or "Incorrect API key" in _err_text\n                    or "invalid api key" in _err_text.lower()\n                ):\n                    print(\n                        "[rd-agent] LLM AUTHENTICATION FAILED: the provider rejected the configured "\n                        "API key. Fix the OPENAI_API_KEY / OPENAI_API_BASE secrets and redeploy; "\n                        "not retrying.",\n                        flush=True,\n                    )\n                    logger.error(\n                        "LLM authentication failed - check OPENAI_API_KEY / OPENAI_API_BASE secrets."\n                    )\n                    raise\n'
+_AUTH_NEW = '            except Exception as e:  # noqa: BLE001\n                _err_text = str(e)\n                _is_auth = (\n                    "AuthenticationError" in _err_text\n                    or "Incorrect API key" in _err_text\n                    or "invalid api key" in _err_text.lower()\n                )\n                _is_quota = (\n                    "Free quota exhausted" in _err_text\n                    or "add funds" in _err_text.lower()\n                    or "insufficient balance" in _err_text.lower()\n                    or "arrearage" in _err_text.lower()\n                )\n                if _is_auth or _is_quota:\n                    if _is_quota:\n                        print(\n                            "[rd-agent] LLM QUOTA EXHAUSTED: the DashScope free-tier quota for this "\n                            "key is used up. Add funds or disable \'use free tier only\' in the Model "\n                            "Studio console (or switch key), then re-run. Not retrying.",\n                            flush=True,\n                        )\n                    else:\n                        print(\n                            "[rd-agent] LLM AUTHENTICATION FAILED: the provider rejected the configured "\n                            "API key. Fix the OPENAI_API_KEY / OPENAI_API_BASE secrets and redeploy; "\n                            "not retrying.",\n                            flush=True,\n                        )\n                    logger.error("LLM request rejected (auth or quota) - check key/quota in the console.")\n                    raise\n'
 patch(
     "rdagent/oai/backend/base.py",
     _AUTH_OLD,
     _AUTH_NEW,
-    "P22 fail fast on LLM auth errors",
+    "P22 fail fast on LLM auth/quota errors",
 )
 
 print("All rdagent patches applied.", flush=True)
