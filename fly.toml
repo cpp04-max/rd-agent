@@ -17,7 +17,9 @@ primary_region = 'lax'
   [[http_service.checks]]
     interval = '30s'
     timeout = '10s'
-    grace_period = '1m0s'
+    # The app loads trace history from the /data volume at boot; on a large trace
+    # folder that can exceed 60s, which aborts rolling deploys. Give it 3 minutes.
+    grace_period = '3m0s'
     method = 'GET'
     path = '/test'
 
@@ -27,6 +29,10 @@ primary_region = 'lax'
   UI_TRACE_FOLDER = "/data/traces"
   RDAGENT_QLIB_UNIVERSE = "csi300"
 
+# NOTE: keep exactly ONE machine for this app. A Fly volume attaches to a single
+# machine; a second machine can never mount /data and will fail its health checks,
+# aborting rolling deploys. If you ever see two machines, destroy the extra one
+# (flyctl machine list / flyctl machine destroy <id>) or `flyctl scale count 1`.
 [mounts]
   source = "rdagentdata"
   destination = "/data"
