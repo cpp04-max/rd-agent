@@ -276,11 +276,9 @@ patch(
     "        # Traces reloaded from disk after a restart have no live task;\n"
     "        # /upload persists stdout at <trace_folder>/<scenario>/<trace_name>.log.\n"
     "        _trace_dir = log_folder_path / normalized_trace_id\n"
-    "        _candidate = _trace_dir.parent / (_trace_dir.name + \".log\")\n"
-    "        if _candidate.exists():\n"
-    "            stdout_path = _candidate\n"
-    "    if stdout_path is None:\n"
-    "        return None\n"
+    "        # Always return the deterministic path (even before the child\n"
+    "        # creates it) so /progress can infer liveness from trace-dir mtime.\n"
+    "        stdout_path = _trace_dir.parent / (_trace_dir.name + \".log\")\n"
     "\n"
     "    stdout_path = stdout_path.resolve()",
     "P9 stdout path fallback for traces reloaded from disk",
@@ -459,6 +457,38 @@ patch(
     "                    _base_ok = (not _thr.is_alive()) and bool(_val.get(\"ok\", False))\n"
     "                    if _base_ok:",
     "P17 bound base-factor validation",
+)
+
+# ---------------------------------------------------------------- P18
+# Capture a task-process crash into the run's own stdout file. Previously a crash
+# before/around the stdout redirect left the run log empty, so /progress reported
+# "no captured output" and the real traceback was invisible.
+patch(
+    "rdagent/log/server/app.py",
+    "    def _run(self) -> None:",
+    "    def _run_safe(self) -> None:\n"
+    '        """Wrap _run so a crash before/around the stdout redirect is captured."""\n'
+    "        try:\n"
+    "            self._run()\n"
+    "        except BaseException:\n"
+    "            import traceback as _tb\n"
+    "\n"
+    "            try:\n"
+    '                with open(self.stdout_path, "a", buffering=1) as _f:\n'
+    '                    _f.write("\\n[rd-agent] task process crashed:\\n")\n'
+    "                    _tb.print_exc(file=_f)\n"
+    "            except OSError:\n"
+    "                pass\n"
+    "            raise\n"
+    "\n"
+    "    def _run(self) -> None:",
+    "P18 crash-capturing run wrapper",
+)
+patch(
+    "rdagent/log/server/app.py",
+    "                target=self._run,",
+    "                target=self._run_safe,",
+    "P18 use crash-capturing wrapper as process target",
 )
 
 print("All rdagent patches applied.", flush=True)

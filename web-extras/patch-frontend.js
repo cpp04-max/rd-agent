@@ -177,6 +177,7 @@ const activityCode =
   "let activityOffset = 0;\n" +
   "let activityTimer = null;\n" +
   "let activityLastTraceId = \"\";\n" +
+  "let activityDeadPolls = 0;\n" +
   "\n" +
   "// ---- workflow progress / ETA state (parsed from the backend tqdm lines) ----\n" +
   "const wfStages = [\"direct_exp_gen\", \"coding\", \"running\", \"feedback\", \"record\"];\n" +
@@ -272,6 +273,7 @@ const activityCode =
   "    activityOffset = 0;\n" +
   "    activityRunning.value = true;\n" +
   "    activityPhase.value = \"starting…\";\n" +
+  "    activityDeadPolls = 0;\n" +
   "    resetWf();\n" +
   "  }\n" +
   "  fetch(`/progress?id=${encodeURIComponent(activityTraceId)}&offset=${activityOffset}`)\n" +
@@ -296,12 +298,19 @@ const activityCode =
   "        });\n" +
   "      }\n" +
   "      if (j.alive === false) {\n" +
+  "        activityDeadPolls += 1;\n" +
+  "        if (activityDeadPolls < 8) {\n" +
+  "          if (!activityText.value) activityPhase.value = \"waiting for run output…\";\n" +
+  "          activityTimer = setTimeout(progressPoll, 3000);\n" +
+  "          return;\n" +
+  "        }\n" +
   "        activityRunning.value = false;\n" +
   "        userInteractionWaitingHypothesis.value = false;\n" +
   "        userInteractionVisible.value = false;\n" +
   "        activityPhase.value = activityText.value ? \"run ended\" : \"run finished (no captured output)\";\n" +
   "        return;\n" +
   "      }\n" +
+  "      activityDeadPolls = 0;\n" +
   "      activityRunning.value = true;\n" +
   "      activityTimer = setTimeout(progressPoll, 3000);\n" +
   "    })\n" +

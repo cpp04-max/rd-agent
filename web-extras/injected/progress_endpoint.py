@@ -1,3 +1,21 @@
+def _infer_alive(stdout_path):
+    """Liveness without the in-memory task registry (other worker / restart)."""
+    import time
+
+    if stdout_path is None:
+        return False
+    if not stdout_path.exists():
+        parent = stdout_path.parent
+        try:
+            return (time.time() - parent.stat().st_mtime) < 120
+        except OSError:
+            return False
+    try:
+        return (time.time() - stdout_path.stat().st_mtime) < 45
+    except OSError:
+        return False
+
+
 @app.route("/progress", methods=["GET"])
 def progress_tail():
     """Live stdout tail powering the dashboard's 'thinking flow' panel."""
@@ -12,8 +30,14 @@ def progress_tail():
         if normalized_trace_id
         else None
     )
-    alive = bool(task is not None and task.is_alive())
     stdout_path = _resolve_stdout_path(trace_id)
+    if task is not None:
+        alive = bool(task.is_alive())
+    else:
+        # Registry miss (request served by another worker, or the server
+        # restarted): infer liveness from stdout/trace-dir freshness instead of
+        # wrongly reporting a running run as finished.
+        alive = _infer_alive(stdout_path)
     if stdout_path is None or not stdout_path.exists() or not stdout_path.is_file():
         return jsonify({"text": "", "offset": offset, "size": 0, "alive": alive})
     try:
