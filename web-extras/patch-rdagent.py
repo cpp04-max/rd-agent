@@ -651,4 +651,50 @@ patch(
     "P27 skip loops that cannot finish in the remaining timer",
 )
 
+# ---------------------------------------------------------------- P28
+# DashScope rejects embedding batches larger than 10 ("batch size is invalid, it
+# should not be larger than 10"). CoSTEER's knowledge-base queries embed whole
+# string lists at once, which crashes once the knowledge base grows. Chunk to 10
+# and merge in order.
+patch(
+    "rdagent/oai/backend/litellm.py",
+    "        response = embedding(\n"
+    "            model=model_name,\n"
+    "            input=input_content_list,\n"
+    "        )\n"
+    '        response_list = [data["embedding"] for data in response.data]\n'
+    "        return response_list",
+    "        _BATCH = 10\n"
+    "        response_list: list[list[float]] = []\n"
+    "        for _i in range(0, len(input_content_list), _BATCH):\n"
+    "            _chunk = input_content_list[_i : _i + _BATCH]\n"
+    "            response = embedding(\n"
+    "                model=model_name,\n"
+    "                input=_chunk,\n"
+    "            )\n"
+    '            response_list.extend(data["embedding"] for data in response.data)\n'
+    "        return response_list",
+    "P28 chunk embedding batches to <=10",
+)
+
+# ---------------------------------------------------------------- P29
+# A 400 BadRequest (e.g. DashScope embedding batch > 10) can never succeed; retrying
+# it 10 times wastes minutes then crashes opaquely. Fail fast with a loud message.
+_BADREQ_OLD1 = '                if _is_auth or _is_quota:\n'
+_BADREQ_NEW1 = '                _is_badreq = (\n                    "BadRequestError" in _err_text\n                    or "InvalidParameter" in _err_text\n                    or "Error code: 400" in _err_text\n                )\n                if _is_auth or _is_quota or _is_badreq:\n'
+patch(
+    "rdagent/oai/backend/base.py",
+    _BADREQ_OLD1,
+    _BADREQ_NEW1,
+    "P29 detect bad-request in retry handler",
+)
+_BADREQ_OLD2 = '                    logger.error("LLM request rejected (auth or quota) - check key/quota in the console.")\n                    raise'
+_BADREQ_NEW2 = '                    if _is_badreq and not _is_auth and not _is_quota:\n                        print(\n                            "[rd-agent] LLM BAD REQUEST (400): the provider rejected the "\n                            "request (e.g. embedding batch too large). Not retrying.",\n                            flush=True,\n                        )\n                    logger.error(\n                        "LLM request rejected (auth/quota/bad-request) - see message above."\n                    )\n                    raise'
+patch(
+    "rdagent/oai/backend/base.py",
+    _BADREQ_OLD2,
+    _BADREQ_NEW2,
+    "P29 loud message for bad-request",
+)
+
 print("All rdagent patches applied.", flush=True)
