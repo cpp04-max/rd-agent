@@ -710,4 +710,17 @@ patch(
     "P30 print run-completion marker to stdout",
 )
 
+# ---------------------------------------------------------------- P31
+# Force the task child to exit immediately after a successful run (stdio flushed
+# first). Without this a teardown hang keeps the child alive, no END is ever
+# synthesized, and the dashboard shows the finished run as result-less.
+_EXIT_OLD = '                    print(\n                        f"[rd-agent] scenario {self.target_name} returned successfully; "\n                        "run complete - results are in the trace storage.",\n                        flush=True,\n                    )\n'
+_EXIT_NEW = '                    print(\n                        f"[rd-agent] scenario {self.target_name} returned successfully; "\n                        "run complete - results are in the trace storage.",\n                        flush=True,\n                    )\n                    # Guarantee prompt exit: a teardown hang (queue-feeder flush,\n                    # mlflow atexit) would otherwise keep the child alive forever,\n                    # so the server never synthesizes END and the dashboard shows\n                    # an in-progress run with no result.\n                    import sys as _sys\n\n                    _sys.stdout.flush()\n                    _sys.stderr.flush()\n                    os._exit(0)\n'
+patch(
+    "rdagent/log/server/app.py",
+    _EXIT_OLD,
+    _EXIT_NEW,
+    "P31 force child exit after successful run",
+)
+
 print("All rdagent patches applied.", flush=True)
