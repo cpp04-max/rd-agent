@@ -697,4 +697,17 @@ patch(
     "P29 loud message for bad-request",
 )
 
+# ---------------------------------------------------------------- P30
+# Print an explicit completion marker to the run stdout. Previously a successful run
+# ended silently in fly logs (END exists only in trace storage), making it impossible
+# to tell 'completed but results on another machine' from 'died at teardown'.
+_DONE_OLD = '                    else:\n                        raise ValueError(f"Unknown target: {self.target_name}")\n'
+_DONE_NEW = '                    else:\n                        raise ValueError(f"Unknown target: {self.target_name}")\n                    print(\n                        f"[rd-agent] scenario {self.target_name} returned successfully; "\n                        "run complete - results are in the trace storage.",\n                        flush=True,\n                    )\n'
+patch(
+    "rdagent/log/server/app.py",
+    _DONE_OLD,
+    _DONE_NEW,
+    "P30 print run-completion marker to stdout",
+)
+
 print("All rdagent patches applied.", flush=True)
