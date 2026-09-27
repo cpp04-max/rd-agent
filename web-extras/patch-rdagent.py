@@ -723,4 +723,30 @@ patch(
     "P31 force child exit after successful run",
 )
 
+# ---------------------------------------------------------------- P32
+# Server-side auto-skip for ALL user interactions. The frontend 'auto skip'
+# switch only auto-submits feedback/hypothesis payloads (init params always show
+# a dialog) and only while that browser tab is open, so runs could never be
+# unattended. With RDAGENT_AUTO_SKIP_INTERACTION=true the loop answers every
+# interaction itself: default instruction, current base features, and the
+# unmodified hypothesis/feedback.
+patch(
+    "rdagent/components/workflow/rd_loop.py",
+    '        logger.info("Waiting for user interaction on initial parameters...")\n',
+    '        if os.environ.get("RDAGENT_AUTO_SKIP_INTERACTION", "").strip().lower() in {\n            "1",\n            "true",\n            "yes",\n            "on",\n        }:\n            logger.info(\n                "Auto-skip interaction: using default initial parameters without asking."\n            )\n            if not self.plan.get("user_instruction"):\n                self.plan["user_instruction"] = (\n                    "Reproduce RD-Agent(Q) (arXiv:2505.15155): jointly optimize alpha "\n                    "factors and the return-forecasting model on the CSI300 universe; use "\n                    "qlib backtest feedback (IC/RankIC, annualized excess return, "\n                    "information ratio, max drawdown) to pick the next direction."\n                )\n            return\n        logger.info("Waiting for user interaction on initial parameters...")\n',
+    "P32 auto-skip initial parameters",
+)
+patch(
+    "rdagent/components/workflow/rd_loop.py",
+    '        logger.info("Waiting for user interaction on hypothesis...")\n',
+    '        if os.environ.get("RDAGENT_AUTO_SKIP_INTERACTION", "").strip().lower() in {\n            "1",\n            "true",\n            "yes",\n            "on",\n        }:\n            logger.info("Auto-skip interaction: keeping the generated hypothesis unchanged.")\n            return hypo\n        logger.info("Waiting for user interaction on hypothesis...")\n',
+    "P32 auto-skip hypothesis confirmation",
+)
+patch(
+    "rdagent/components/workflow/rd_loop.py",
+    '        logger.info("Waiting for user interaction on feedback...")\n',
+    '        if os.environ.get("RDAGENT_AUTO_SKIP_INTERACTION", "").strip().lower() in {\n            "1",\n            "true",\n            "yes",\n            "on",\n        }:\n            logger.info("Auto-skip interaction: keeping the generated feedback unchanged.")\n            return feedback\n        logger.info("Waiting for user interaction on feedback...")\n',
+    "P32 auto-skip feedback confirmation",
+)
+
 print("All rdagent patches applied.", flush=True)

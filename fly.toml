@@ -35,6 +35,10 @@ primary_region = 'lax'
   RDAGENT_QLIB_UNIVERSE = "csi300"
   # Bound CPU model training so one model can't eat the whole 6h loop timer
   # (LLM-proposed n_epochs defaults to 100; ~minutes/epoch on CPU). Tunable.
+  # Fully unattended runs: answer every user interaction with sensible defaults
+  # (default instruction, current base features, unmodified hypothesis/feedback).
+  # Set to "false" (or remove) to get the interactive dialogs back.
+  RDAGENT_AUTO_SKIP_INTERACTION = "true"
   RDAGENT_MAX_EPOCHS = "30"
   # Persist CoSTEER knowledge across runs/deployments on the /data volume so
   # later loops reuse learned implementation knowledge instead of re-evolving.
