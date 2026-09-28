@@ -394,3 +394,20 @@ s4 =
 
 fs.writeFileSync(p4, s4);
 console.log("[patch-frontend] single-scenario dropdown (source-level) applied to Playground.vue");
+
+// -------------------------------------- tolerant RESULT-tab metric mapping (P35)
+// The qlib backtest may report with_cost keys (and as few as 3 of them); the old
+// parser only understood the 4 without_cost keys when the dict had >4 entries, so
+// successful runs rendered an empty RESULT tab. Accept both variants, any size.
+const p5 = "/src/web/src/views/PlaygroundPage.vue";
+let s5 = fs.readFileSync(p5, "utf8");
+const metricOld = "      if (Object.keys(metricResult).length > 4) {\n        onePollDataObj.feedbackMetric = {\n          IC: metricResult[\"IC\"],\n          \"1day.excess_return_without_cost.annualized_return\":\n            metricResult[\"1day.excess_return_without_cost.annualized_return\"],\n          \"1day.excess_return_without_cost.information_ratio\":\n            metricResult[\"1day.excess_return_without_cost.information_ratio\"],\n          \"1day.excess_return_without_cost.max_drawdown\":\n            metricResult[\"1day.excess_return_without_cost.max_drawdown\"],\n        };\n      } else {\n        onePollDataObj.feedbackMetric = metricResult;\n      }\n";
+const metricNew = "      const pickMetric = (obj, names) => {\n        for (const n of names) {\n          if (obj && obj[n] !== undefined && obj[n] !== null) return obj[n];\n        }\n        return undefined;\n      };\n      onePollDataObj.feedbackMetric = {\n        IC: pickMetric(metricResult, [\"IC\", \"Rank IC\"]),\n        \"1day.excess_return_without_cost.annualized_return\": pickMetric(metricResult, [\n          \"1day.excess_return_without_cost.annualized_return\",\n          \"1day.excess_return_with_cost.annualized_return\",\n        ]),\n        \"1day.excess_return_without_cost.information_ratio\": pickMetric(metricResult, [\n          \"1day.excess_return_without_cost.information_ratio\",\n          \"1day.excess_return_with_cost.information_ratio\",\n        ]),\n        \"1day.excess_return_without_cost.max_drawdown\": pickMetric(metricResult, [\n          \"1day.excess_return_without_cost.max_drawdown\",\n          \"1day.excess_return_with_cost.max_drawdown\",\n        ]),\n      };\n";
+if (!s5.includes(metricOld)) {
+  console.error("[patch-frontend] FAILED: feedback.metric parser anchor drifted.");
+  process.exit(1);
+}
+s5 = s5.replace(metricOld, metricNew);
+fs.writeFileSync(p5, s5);
+console.log("[patch-frontend] tolerant RESULT metric mapping applied to PlaygroundPage.vue");
+
