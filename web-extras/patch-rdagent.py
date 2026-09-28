@@ -749,4 +749,27 @@ patch(
     "P32 auto-skip feedback confirmation",
 )
 
+# ---------------------------------------------------------------- P33
+# Route chat and embedding calls to different endpoints/keys. The Token Plan
+# endpoint serves chat models only ('Model not exist' for text-embedding-v4), so
+# chat can use the plan (CHAT_OPENAI_BASE_URL/CHAT_OPENAI_API_KEY) while embeddings
+# fall back to the general endpoint (EMBEDDING_OPENAI_BASE_URL/..._API_KEY, or
+# OPENAI_API_BASE/OPENAI_API_KEY when unset). Defaults unchanged when unset.
+_CHATROUTE_OLD = '        response = completion(\n            messages=messages,\n            stream=LITELLM_SETTINGS.chat_stream,\n            max_retries=0,\n            **complete_kwargs,\n            **kwargs,\n        )\n'
+_CHATROUTE_NEW = '        response = completion(\n            messages=messages,\n            stream=LITELLM_SETTINGS.chat_stream,\n            max_retries=0,\n            api_base=(\n                LITELLM_SETTINGS.chat_openai_base_url or LITELLM_SETTINGS.openai_api_base or None\n            ),\n            api_key=(\n                LITELLM_SETTINGS.chat_openai_api_key or LITELLM_SETTINGS.openai_api_key or None\n            ),\n            **complete_kwargs,\n            **kwargs,\n        )\n'
+patch(
+    "rdagent/oai/backend/litellm.py",
+    _CHATROUTE_OLD,
+    _CHATROUTE_NEW,
+    "P33 route chat calls via chat_openai_* settings",
+)
+_EMBROUTE_OLD = '            response = embedding(\n                model=model_name,\n                input=_chunk,\n            )\n'
+_EMBROUTE_NEW = '            response = embedding(\n                model=model_name,\n                input=_chunk,\n                api_base=(\n                    LITELLM_SETTINGS.embedding_openai_base_url\n                    or LITELLM_SETTINGS.openai_api_base\n                    or None\n                ),\n                api_key=(\n                    LITELLM_SETTINGS.embedding_openai_api_key\n                    or LITELLM_SETTINGS.openai_api_key\n                    or None\n                ),\n            )\n'
+patch(
+    "rdagent/oai/backend/litellm.py",
+    _EMBROUTE_OLD,
+    _EMBROUTE_NEW,
+    "P33 route embedding calls via embedding_openai_* settings",
+)
+
 print("All rdagent patches applied.", flush=True)
