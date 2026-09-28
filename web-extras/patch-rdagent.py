@@ -751,14 +751,12 @@ patch(
 
 # ---------------------------------------------------------------- P33
 # Allow chat and embedding calls to use different endpoints/keys WITHOUT breaking
-# provider-native routing. Explicit api_base/api_key are passed only when the
-# CHAT_OPENAI_*/EMBEDDING_OPENAI_* settings are set; otherwise litellm resolves the
-# endpoint per model prefix from its own env (OPENAI_API_BASE for openai/*,
-# LITELLM_PROXY_API_BASE/KEY for litellm_proxy/*). Needed so EMBEDDING_MODEL=
-# litellm_proxy/<model> + LITELLM_PROXY_* secrets route to the Bailian workspace
-# endpoint while chat stays on the Token Plan endpoint.
+# provider-native routing: the override kwargs are added ONLY when the
+# CHAT_OPENAI_*/EMBEDDING_OPENAI_* settings are non-empty (passing an explicit None
+# would make litellm skip its env resolution, e.g. LITELLM_PROXY_API_BASE for
+# litellm_proxy/* models or OPENAI_API_BASE for openai/* models).
 _CHATROUTE_OLD = '        response = completion(\n            messages=messages,\n            stream=LITELLM_SETTINGS.chat_stream,\n            max_retries=0,\n            **complete_kwargs,\n            **kwargs,\n        )\n'
-_CHATROUTE_NEW = '        response = completion(\n            messages=messages,\n            stream=LITELLM_SETTINGS.chat_stream,\n            max_retries=0,\n            # Only override when explicitly configured; otherwise let litellm\n            # resolve the endpoint per provider from its own env (OPENAI_API_BASE\n            # for openai/*, LITELLM_PROXY_API_BASE for litellm_proxy/*, ...).\n            api_base=(LITELLM_SETTINGS.chat_openai_base_url or None),\n            api_key=(LITELLM_SETTINGS.chat_openai_api_key or None),\n            **complete_kwargs,\n            **kwargs,\n        )\n'
+_CHATROUTE_NEW = '        # Only pass api_base/api_key when explicitly configured; an explicit\n        # None makes litellm skip its per-provider env resolution.\n        _route_kwargs = {}\n        if LITELLM_SETTINGS.chat_openai_base_url:\n            _route_kwargs["api_base"] = LITELLM_SETTINGS.chat_openai_base_url\n        if LITELLM_SETTINGS.chat_openai_api_key:\n            _route_kwargs["api_key"] = LITELLM_SETTINGS.chat_openai_api_key\n        response = completion(\n            messages=messages,\n            stream=LITELLM_SETTINGS.chat_stream,\n            max_retries=0,\n            **_route_kwargs,\n            **complete_kwargs,\n            **kwargs,\n        )\n'
 patch(
     "rdagent/oai/backend/litellm.py",
     _CHATROUTE_OLD,
@@ -766,12 +764,42 @@ patch(
     "P33 optional chat endpoint override",
 )
 _EMBROUTE_OLD = '            response = embedding(\n                model=model_name,\n                input=_chunk,\n            )\n'
-_EMBROUTE_NEW = '            response = embedding(\n                model=model_name,\n                input=_chunk,\n                # Only override when explicitly configured; otherwise let litellm\n                # resolve per provider (e.g. litellm_proxy/* uses\n                # LITELLM_PROXY_API_BASE/KEY), so a proxy-prefixed embedding model\n                # is never forced onto the chat endpoint.\n                api_base=(LITELLM_SETTINGS.embedding_openai_base_url or None),\n                api_key=(LITELLM_SETTINGS.embedding_openai_api_key or None),\n            )\n'
+_EMBROUTE_NEW = '            _emb_route_kwargs = {}\n            if LITELLM_SETTINGS.embedding_openai_base_url:\n                _emb_route_kwargs["api_base"] = LITELLM_SETTINGS.embedding_openai_base_url\n            if LITELLM_SETTINGS.embedding_openai_api_key:\n                _emb_route_kwargs["api_key"] = LITELLM_SETTINGS.embedding_openai_api_key\n            response = embedding(\n                model=model_name,\n                input=_chunk,\n                **_emb_route_kwargs,\n            )\n'
 patch(
     "rdagent/oai/backend/litellm.py",
     _EMBROUTE_OLD,
     _EMBROUTE_NEW,
     "P33 optional embedding endpoint override",
+)
+
+# ---------------------------------------------------------------- P34
+# Log the effective endpoint + masked key ONCE per process tree (env-flag dedupe,
+# so subprocesses don't repeat it) for chat and embeddings. A misrouted config
+# (e.g. chat still on the general DashScope endpoint instead of the Token Plan
+# URL) then shows up as one obvious line instead of a confusing 403 mid-run.
+_ROUTE_IMP_OLD = 'from litellm import (\n'
+_ROUTE_IMP_NEW = 'from os import environ as _os_environ\n\nfrom litellm import (\n'
+patch(
+    "rdagent/oai/backend/litellm.py",
+    _ROUTE_IMP_OLD,
+    _ROUTE_IMP_NEW,
+    "P34 import os in litellm backend",
+)
+_ROUTE_CHAT_OLD = '        model = LITELLM_SETTINGS.chat_model\n'
+_ROUTE_CHAT_NEW = '        model = LITELLM_SETTINGS.chat_model\n        if not _os_environ.get("_RD_ROUTE_LOG_CHAT"):\n            _os_environ["_RD_ROUTE_LOG_CHAT"] = "1"\n            _base = LITELLM_SETTINGS.chat_openai_base_url or _os_environ.get("OPENAI_API_BASE", "")\n            _key = LITELLM_SETTINGS.chat_openai_api_key or _os_environ.get("OPENAI_API_KEY", "")\n            print(\n                f"[rd-agent] LLM route: chat model={model} base={_base} "\n                f"key={(_key[:6] + \'…\' + _key[-4:]) if _key else \'<unset>\'}",\n                flush=True,\n            )\n'
+patch(
+    "rdagent/oai/backend/litellm.py",
+    _ROUTE_CHAT_OLD,
+    _ROUTE_CHAT_NEW,
+    "P34 log effective chat route (once)",
+)
+_ROUTE_EMB_OLD = '        model_name = LITELLM_SETTINGS.embedding_model\n'
+_ROUTE_EMB_NEW = '        model_name = LITELLM_SETTINGS.embedding_model\n        if not _os_environ.get("_RD_ROUTE_LOG_EMB"):\n            _os_environ["_RD_ROUTE_LOG_EMB"] = "1"\n            if LITELLM_SETTINGS.embedding_openai_base_url:\n                _base = LITELLM_SETTINGS.embedding_openai_base_url\n            elif model_name.startswith("litellm_proxy/"):\n                _base = _os_environ.get("LITELLM_PROXY_API_BASE", "")\n            else:\n                _base = _os_environ.get("OPENAI_API_BASE", "")\n            _key = LITELLM_SETTINGS.embedding_openai_api_key or (\n                _os_environ.get("LITELLM_PROXY_API_KEY", "")\n                if model_name.startswith("litellm_proxy/")\n                else _os_environ.get("OPENAI_API_KEY", "")\n            )\n            print(\n                f"[rd-agent] LLM route: embedding model={model_name} base={_base} "\n                f"key={(_key[:6] + \'…\' + _key[-4:]) if _key else \'<unset>\'}",\n                flush=True,\n            )\n'
+patch(
+    "rdagent/oai/backend/litellm.py",
+    _ROUTE_EMB_OLD,
+    _ROUTE_EMB_NEW,
+    "P34 log effective embedding route (once)",
 )
 
 print("All rdagent patches applied.", flush=True)
