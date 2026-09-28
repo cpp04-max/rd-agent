@@ -750,26 +750,28 @@ patch(
 )
 
 # ---------------------------------------------------------------- P33
-# Route chat and embedding calls to different endpoints/keys. The Token Plan
-# endpoint serves chat models only ('Model not exist' for text-embedding-v4), so
-# chat can use the plan (CHAT_OPENAI_BASE_URL/CHAT_OPENAI_API_KEY) while embeddings
-# fall back to the general endpoint (EMBEDDING_OPENAI_BASE_URL/..._API_KEY, or
-# OPENAI_API_BASE/OPENAI_API_KEY when unset). Defaults unchanged when unset.
+# Allow chat and embedding calls to use different endpoints/keys WITHOUT breaking
+# provider-native routing. Explicit api_base/api_key are passed only when the
+# CHAT_OPENAI_*/EMBEDDING_OPENAI_* settings are set; otherwise litellm resolves the
+# endpoint per model prefix from its own env (OPENAI_API_BASE for openai/*,
+# LITELLM_PROXY_API_BASE/KEY for litellm_proxy/*). Needed so EMBEDDING_MODEL=
+# litellm_proxy/<model> + LITELLM_PROXY_* secrets route to the Bailian workspace
+# endpoint while chat stays on the Token Plan endpoint.
 _CHATROUTE_OLD = '        response = completion(\n            messages=messages,\n            stream=LITELLM_SETTINGS.chat_stream,\n            max_retries=0,\n            **complete_kwargs,\n            **kwargs,\n        )\n'
-_CHATROUTE_NEW = '        response = completion(\n            messages=messages,\n            stream=LITELLM_SETTINGS.chat_stream,\n            max_retries=0,\n            api_base=(\n                LITELLM_SETTINGS.chat_openai_base_url or LITELLM_SETTINGS.openai_api_base or None\n            ),\n            api_key=(\n                LITELLM_SETTINGS.chat_openai_api_key or LITELLM_SETTINGS.openai_api_key or None\n            ),\n            **complete_kwargs,\n            **kwargs,\n        )\n'
+_CHATROUTE_NEW = '        response = completion(\n            messages=messages,\n            stream=LITELLM_SETTINGS.chat_stream,\n            max_retries=0,\n            # Only override when explicitly configured; otherwise let litellm\n            # resolve the endpoint per provider from its own env (OPENAI_API_BASE\n            # for openai/*, LITELLM_PROXY_API_BASE for litellm_proxy/*, ...).\n            api_base=(LITELLM_SETTINGS.chat_openai_base_url or None),\n            api_key=(LITELLM_SETTINGS.chat_openai_api_key or None),\n            **complete_kwargs,\n            **kwargs,\n        )\n'
 patch(
     "rdagent/oai/backend/litellm.py",
     _CHATROUTE_OLD,
     _CHATROUTE_NEW,
-    "P33 route chat calls via chat_openai_* settings",
+    "P33 optional chat endpoint override",
 )
 _EMBROUTE_OLD = '            response = embedding(\n                model=model_name,\n                input=_chunk,\n            )\n'
-_EMBROUTE_NEW = '            response = embedding(\n                model=model_name,\n                input=_chunk,\n                api_base=(\n                    LITELLM_SETTINGS.embedding_openai_base_url\n                    or LITELLM_SETTINGS.openai_api_base\n                    or None\n                ),\n                api_key=(\n                    LITELLM_SETTINGS.embedding_openai_api_key\n                    or LITELLM_SETTINGS.openai_api_key\n                    or None\n                ),\n            )\n'
+_EMBROUTE_NEW = '            response = embedding(\n                model=model_name,\n                input=_chunk,\n                # Only override when explicitly configured; otherwise let litellm\n                # resolve per provider (e.g. litellm_proxy/* uses\n                # LITELLM_PROXY_API_BASE/KEY), so a proxy-prefixed embedding model\n                # is never forced onto the chat endpoint.\n                api_base=(LITELLM_SETTINGS.embedding_openai_base_url or None),\n                api_key=(LITELLM_SETTINGS.embedding_openai_api_key or None),\n            )\n'
 patch(
     "rdagent/oai/backend/litellm.py",
     _EMBROUTE_OLD,
     _EMBROUTE_NEW,
-    "P33 route embedding calls via embedding_openai_* settings",
+    "P33 optional embedding endpoint override",
 )
 
 print("All rdagent patches applied.", flush=True)
