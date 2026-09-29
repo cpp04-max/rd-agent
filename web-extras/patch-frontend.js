@@ -411,3 +411,22 @@ s5 = s5.replace(metricOld, metricNew);
 fs.writeFileSync(p5, s5);
 console.log("[patch-frontend] tolerant RESULT metric mapping applied to PlaygroundPage.vue");
 
+// ------------------------- P36: lossless/dynamic RESULT metrics -------------------------
+// ResultPage/chartBox iterate Object.keys(feedbackMetric), so keeping EVERY raw qlib
+// metric (Rank IC, ICIR, turnover, with_cost.*, ...) makes the Result tab dynamic and
+// future-proof, while the canonical four headline keys are still guaranteed present.
+const p6 = "/src/web/src/views/PlaygroundPage.vue";
+let s6 = fs.readFileSync(p6, "utf8");
+const a1o = "      onePollDataObj.feedbackMetric = {\n        IC: pickMetric(metricResult, [\"IC\", \"Rank IC\"]),\n";
+const a1n = "      onePollDataObj.feedbackMetric = Object.assign({}, metricResult, {\n        IC: pickMetric(metricResult, [\"IC\", \"Rank IC\"]),\n";
+const a2o = "          \"1day.excess_return_with_cost.max_drawdown\",\n        ]),\n      };\n";
+const a2n = "          \"1day.excess_return_with_cost.max_drawdown\",\n        ]),\n      });\n      for (const k of Object.keys(onePollDataObj.feedbackMetric)) {\n        if (onePollDataObj.feedbackMetric[k] === undefined) {\n          delete onePollDataObj.feedbackMetric[k];\n        }\n      }\n";
+if (!s6.includes(a1o) || !s6.includes(a2o)) {
+  console.error("[patch-frontend] FAILED: P36 metric-merge anchors drifted.");
+  process.exit(1);
+}
+s6 = s6.replace(a1o, a1n).replace(a2o, a2n);
+fs.writeFileSync(p6, s6);
+console.log("[patch-frontend] lossless dynamic RESULT metrics applied to PlaygroundPage.vue");
+
+
