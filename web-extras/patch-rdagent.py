@@ -802,4 +802,65 @@ patch(
     "P34 log effective embedding route (once)",
 )
 
+
+# ---------------------------------------------------------------- P37 robust historical trace reload
+# A historical RESULT page can be empty even when the run succeeded if one persisted
+# trace object cannot be converted for the web UI: read_trace() previously aborted the
+# entire replay on that single conversion error. Skip only the malformed event. Also,
+# if a history trace exists on disk but has no in-memory messages (e.g. startup load
+# raced/failed), /trace reloads it on demand instead of returning an empty array.
+_READ_TRACE_OLD = '''    for msg in fs.iter_msg():
+        data = ws._obj_to_json(obj=msg.content, tag=msg.tag, id=id, timestamp=msg.timestamp.isoformat())
+        if data:
+'''
+_READ_TRACE_NEW = '''    for msg in fs.iter_msg():
+        try:
+            data = ws._obj_to_json(obj=msg.content, tag=msg.tag, id=id, timestamp=msg.timestamp.isoformat())
+        except Exception:
+            app.logger.exception(
+                "Skipping malformed trace event while replaying %s (tag=%s)",
+                log_path,
+                getattr(msg, "tag", "<unknown>"),
+            )
+            continue
+        if data:
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _READ_TRACE_OLD,
+    _READ_TRACE_NEW,
+    "P37 skip malformed persisted trace events",
+)
+
+_TRACE_RELOAD_OLD = '''    task = _get_or_create_task(trace_id)
+
+    # Make sure any pending user-interaction requests are visible to the frontend.
+'''
+_TRACE_RELOAD_NEW = '''    task = _get_or_create_task(trace_id)
+
+    # History traces normally load at server startup. If that replay failed or the
+    # task was created lazily, recover directly from the persisted trace directory.
+    if task.process is None and not task.messages:
+        _trace_dir = Path(trace_id)
+        if _trace_dir.exists() and _trace_dir.is_dir():
+            try:
+                read_trace(_trace_dir, id=trace_id)
+                task = _get_or_create_task(trace_id)
+                app.logger.info(
+                    "Reloaded historical trace on demand: %s (%d UI messages)",
+                    trace_id,
+                    len(task.messages),
+                )
+            except Exception:
+                app.logger.exception("Failed to reload historical trace on demand: %s", trace_id)
+
+    # Make sure any pending user-interaction requests are visible to the frontend.
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _TRACE_RELOAD_OLD,
+    _TRACE_RELOAD_NEW,
+    "P37 on-demand persisted trace reload",
+)
+
 print("All rdagent patches applied.", flush=True)
