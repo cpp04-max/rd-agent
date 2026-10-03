@@ -429,4 +429,190 @@ s6 = s6.replace(a1o, a1n).replace(a2o, a2n);
 fs.writeFileSync(p6, s6);
 console.log("[patch-frontend] lossless dynamic RESULT metrics applied to PlaygroundPage.vue");
 
+// ------------------------- P37: make RESULT independent of END + null-safe rendering -------------------------
+// A completed/usable loop must be visible in RESULT even if the synthetic END event was
+// not persisted/replayed (common after a redeploy). Also make ResultPage tolerant of
+// partial historical traces: metrics/feedback should still render when a hypothesis
+// event is missing, and missing metric fields must never crash the whole component.
+const p7 = "/src/web/src/views/PlaygroundPage.vue";
+let s7 = fs.readFileSync(p7, "utf8");
+
+const resultStateAnchor = "const endTagHandled = ref(false);\n";
+const resultStateReplacement =
+  "const endTagHandled = ref(false);\n" +
+  "\n" +
+  "const hasStructuredResultPayload = (item) => {\n" +
+  "  if (!item || typeof item !== \"object\") return false;\n" +
+  "  return Boolean(\n" +
+  "    item.researchHypothesis ||\n" +
+  "    item.researcTasks ||\n" +
+  "    item.feedbackHypothesis ||\n" +
+  "    item.feedbackMetric ||\n" +
+  "    item.feedbackCharts ||\n" +
+  "    (Array.isArray(item.evolvingCodes) && item.evolvingCodes.length) ||\n" +
+  "    (Array.isArray(item.evolvingFeedbacks) && item.evolvingFeedbacks.length)\n" +
+  "  );\n" +
+  "};\n" +
+  "\n" +
+  "// allData only receives the last loop when END is observed. Historical traces can\n" +
+  "// be replayed without END immediately after a redeploy, so include the current\n" +
+  "// assembled loop as a RESULT candidate until END has been handled.\n" +
+  "const resultData = computed(() => {\n" +
+  "  const rows = Array.isArray(allData.value) ? [...allData.value] : [];\n" +
+  "  if (!endTagHandled.value && hasStructuredResultPayload(onePollDataObj)) {\n" +
+  "    rows.push({\n" +
+  "      ...onePollDataObj,\n" +
+  "      evolvingCodes: Array.isArray(onePollDataObj.evolvingCodes) ? [...onePollDataObj.evolvingCodes] : [],\n" +
+  "      evolvingFeedbacks: Array.isArray(onePollDataObj.evolvingFeedbacks) ? [...onePollDataObj.evolvingFeedbacks] : [],\n" +
+  "    });\n" +
+  "  }\n" +
+  "  return rows.filter(hasStructuredResultPayload);\n" +
+  "});\n";
+
+if (!s7.includes(resultStateAnchor)) {
+  console.error("[patch-frontend] FAILED: P37 result-state anchor drifted.");
+  process.exit(1);
+}
+s7 = s7.replace(resultStateAnchor, resultStateReplacement);
+
+const resultTabOld = '              v-if="allData.length != 0"';
+const resultTabNew = '              v-if="resultData.length != 0"';
+const resultLoadingOld = '            <div class="tab-item-btn" v-if="allData.length == 0 && !stopFlag">';
+const resultLoadingNew = '            <div class="tab-item-btn" v-if="resultData.length == 0 && !stopFlag">';
+const resultPropOld = '            :currentData="allData"';
+const resultPropNew = '            :currentData="resultData"';
+
+for (const [oldText, newText, label] of [
+  [resultTabOld, resultTabNew, "RESULT tab visibility"],
+  [resultLoadingOld, resultLoadingNew, "RESULT loading visibility"],
+  [resultPropOld, resultPropNew, "RESULT data prop"],
+]) {
+  if (!s7.includes(oldText)) {
+    console.error("[patch-frontend] FAILED: P37 " + label + " anchor drifted.");
+    process.exit(1);
+  }
+  s7 = s7.replace(oldText, newText);
+}
+fs.writeFileSync(p7, s7);
+console.log("[patch-frontend] P37 RESULT current-loop fallback applied to PlaygroundPage.vue");
+
+const p8 = "/src/web/src/views/ResultPage.vue";
+let s8 = fs.readFileSync(p8, "utf8");
+const updateStart = s8.indexOf("const updateData = () => {");
+const updateWatch = s8.indexOf("\nwatch(\n  () => [props.currentData", updateStart);
+if (updateStart === -1 || updateWatch === -1 || updateWatch <= updateStart) {
+  console.error("[patch-frontend] FAILED: P37 ResultPage updateData anchors drifted.");
+  process.exit(1);
+}
+
+const robustUpdateData = `const updateData = () => {
+  const table = [];
+  const metric = {};
+  const rows = Array.isArray(currentData.value) ? currentData.value : [];
+
+  const addMetric = (name, value, index, description) => {
+    if (value === undefined || value === null || value === "") return;
+    if (!metric[name]) metric[name] = [];
+    metric[name].push({
+      name: "Round" + (index + 1),
+      value,
+      desc: description || "",
+    });
+  };
+
+  rows.forEach((rawItem, index) => {
+    const item = rawItem && typeof rawItem === "object" ? rawItem : {};
+    const hypothesis =
+      item.researchHypothesis && typeof item.researchHypothesis === "object"
+        ? item.researchHypothesis
+        : {};
+    const feedback =
+      item.feedbackHypothesis && typeof item.feedbackHypothesis === "object"
+        ? item.feedbackHypothesis
+        : {};
+    const metrics =
+      item.feedbackMetric && typeof item.feedbackMetric === "object"
+        ? item.feedbackMetric
+        : {};
+
+    const hypothesisText =
+      hypothesis.hypothesis ||
+      feedback.hypothesis ||
+      feedback.new_hypothesis ||
+      ("Research loop " + (index + 1));
+    const decision = normalizeDecision(feedback.decision);
+    const hasStructuredPayload =
+      Boolean(item.researchHypothesis) ||
+      Boolean(item.feedbackHypothesis) ||
+      Object.keys(metrics).length > 0 ||
+      Boolean(item.feedbackCharts) ||
+      (Array.isArray(item.evolvingCodes) && item.evolvingCodes.length > 0) ||
+      (Array.isArray(item.evolvingFeedbacks) && item.evolvingFeedbacks.length > 0);
+
+    if (hasStructuredPayload && (!switchValue.value || decision === true)) {
+      table.push({
+        num: index,
+        hypothesis: hypothesisText,
+        component: hypothesis.component || "",
+        downloadFiles: getLoopLastEvoFiles(item),
+        reason:
+          feedback.reason ||
+          feedback.hypothesis_evaluation ||
+          feedback.feedback ||
+          "",
+        observations: feedback.observations || "",
+        decision: decision === true,
+      });
+    }
+
+    if (!switchValue.value || decision === true) {
+      Object.entries(metrics).forEach(([name, value]) => {
+        addMetric(name, value, index, hypothesisText);
+      });
+    }
+  });
+
+  tableData.value = table;
+  metricData.value = metric;
+};`;
+
+s8 = s8.slice(0, updateStart) + robustUpdateData + s8.slice(updateWatch);
+
+const resultContentAnchor = '      <div class="result-content">\n        <h2>Metrics</h2>';
+const resultContentReplacement =
+  '      <div class="result-content">\n' +
+  '        <div\n' +
+  '          v-if="tableData.length === 0 && Object.keys(metricData || {}).length === 0"\n' +
+  '          class="result-empty-state"\n' +
+  '        >\n' +
+  '          No structured result events are available for this trace yet. The raw run log can still be downloaded above.\n' +
+  '        </div>\n' +
+  '        <h2>Metrics</h2>';
+if (!s8.includes(resultContentAnchor)) {
+  console.error("[patch-frontend] FAILED: P37 ResultPage empty-state anchor drifted.");
+  process.exit(1);
+}
+s8 = s8.replace(resultContentAnchor, resultContentReplacement);
+
+const styleAnchor = ".result-component {\n  height: 100%;";
+const styleReplacement =
+  ".result-component {\n" +
+  "  height: 100%;\n" +
+  "  .result-empty-state {\n" +
+  "    margin: 0 0 1em;\n" +
+  "    padding: 0.8em 1em;\n" +
+  "    border: 1px solid #d7e1ff;\n" +
+  "    border-radius: 12px;\n" +
+  "    background: #f7f9ff;\n" +
+  "    color: #5d6780;\n" +
+  "    font-size: 0.9em;\n" +
+  "  }";
+if (!s8.includes(styleAnchor)) {
+  console.error("[patch-frontend] FAILED: P37 ResultPage style anchor drifted.");
+  process.exit(1);
+}
+s8 = s8.replace(styleAnchor, styleReplacement);
+
+fs.writeFileSync(p8, s8);
+console.log("[patch-frontend] P37 null-safe RESULT rendering applied to ResultPage.vue");
 
