@@ -459,11 +459,17 @@ const resultStateReplacement =
   "// assembled loop as a RESULT candidate until END has been handled.\n" +
   "const resultData = computed(() => {\n" +
   "  const rows = Array.isArray(allData.value) ? [...allData.value] : [];\n" +
-  "  if (!endTagHandled.value && hasStructuredResultPayload(onePollDataObj)) {\n" +
+  "  // currentData is a ref updated after every /trace batch; using it here makes\n" +
+  "  // this computed reactive even though onePollDataObj itself is a plain object.\n" +
+  "  const current =\n" +
+  "    currentData.value && typeof currentData.value === \"object\"\n" +
+  "      ? currentData.value\n" +
+  "      : onePollDataObj;\n" +
+  "  if (!endTagHandled.value && hasStructuredResultPayload(current)) {\n" +
   "    rows.push({\n" +
-  "      ...onePollDataObj,\n" +
-  "      evolvingCodes: Array.isArray(onePollDataObj.evolvingCodes) ? [...onePollDataObj.evolvingCodes] : [],\n" +
-  "      evolvingFeedbacks: Array.isArray(onePollDataObj.evolvingFeedbacks) ? [...onePollDataObj.evolvingFeedbacks] : [],\n" +
+  "      ...current,\n" +
+  "      evolvingCodes: Array.isArray(current.evolvingCodes) ? [...current.evolvingCodes] : [],\n" +
+  "      evolvingFeedbacks: Array.isArray(current.evolvingFeedbacks) ? [...current.evolvingFeedbacks] : [],\n" +
   "    });\n" +
   "  }\n" +
   "  return rows.filter(hasStructuredResultPayload);\n" +
@@ -476,9 +482,9 @@ if (!s7.includes(resultStateAnchor)) {
 s7 = s7.replace(resultStateAnchor, resultStateReplacement);
 
 const resultTabOld = '              v-if="allData.length != 0"';
-const resultTabNew = '              v-if="resultData.length != 0"';
+const resultTabNew = '              v-if="resultData.length != 0 || updateEnd"';
 const resultLoadingOld = '            <div class="tab-item-btn" v-if="allData.length == 0 && !stopFlag">';
-const resultLoadingNew = '            <div class="tab-item-btn" v-if="resultData.length == 0 && !stopFlag">';
+const resultLoadingNew = '            <div class="tab-item-btn" v-if="resultData.length == 0 && !updateEnd && !stopFlag">';
 const resultPropOld = '            :currentData="allData"';
 const resultPropNew = '            :currentData="resultData"';
 
