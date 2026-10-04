@@ -1145,4 +1145,56 @@ patch(
     "P40 log historical RESULT replay counts",
 )
 
+
+# ---------------------------------------------------------------- P41 reconcile completed live runs from persisted trace
+# RESULT must not depend on best-effort live /receive delivery. Once a child process
+# has exited, rebuild its UI messages from the durable .pkl trace before returning
+# END. This makes a freshly completed run converge to the same state as history
+# replay and lets P40 recover hypothesis/metric/feedback deterministically.
+_P41_RECONCILE_OLD = '''    # Make sure any pending user-interaction requests are visible to the frontend.
+    _drain_user_requests_into_messages(task)
+
+    if task.process is not None and not task.is_alive():
+'''
+_P41_RECONCILE_NEW = '''    # A live run may have missed one or more best-effort WebStorage /receive
+    # messages even though FileStorage persisted the corresponding .pkl objects.
+    # Once the process is complete, make persisted storage authoritative and rebuild
+    # the UI message stream exactly once before synthesizing END.
+    if (
+        task.process is not None
+        and not task.is_alive()
+        and not getattr(task, "_result_reconciled_from_disk", False)
+    ):
+        _completed_trace_dir = Path(trace_id)
+        if _completed_trace_dir.exists() and _completed_trace_dir.is_dir():
+            try:
+                read_trace(_completed_trace_dir, id=trace_id)
+                task = _get_or_create_task(trace_id)
+                # The client may already have advanced a pointer through an incomplete
+                # live message stream. Replay the authoritative rebuilt stream from 0.
+                task.pointers.clear()
+                task._result_reconciled_from_disk = True
+                app.logger.info(
+                    "Reconciled completed trace from disk: %s (%d UI messages)",
+                    trace_id,
+                    len(task.messages),
+                )
+            except Exception:
+                app.logger.exception(
+                    "Failed to reconcile completed trace from disk: %s",
+                    trace_id,
+                )
+
+    # Make sure any pending user-interaction requests are visible to the frontend.
+    _drain_user_requests_into_messages(task)
+
+    if task.process is not None and not task.is_alive():
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P41_RECONCILE_OLD,
+    _P41_RECONCILE_NEW,
+    "P41 rebuild completed live RESULT from persisted trace",
+)
+
 print("All rdagent patches applied.", flush=True)
