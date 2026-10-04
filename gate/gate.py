@@ -304,7 +304,27 @@ class InviteGate:
 
 def main(port: int = 19899):
     app.config["UI_SERVER_PORT"] = port
-    _load_existing_traces(log_folder_path)
+
+    # Historical trace replay can be expensive and used to block Flask from
+    # listening on the Fly health-check port during deploy. P37 already reloads
+    # a selected historical trace on demand in /trace, while /traces discovers
+    # history directly from disk, so eager startup replay is unnecessary.
+    eager_trace_load = os.environ.get("RDAGENT_EAGER_TRACE_LOAD", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if eager_trace_load:
+        print("[rd-agent] eager historical trace load enabled", flush=True)
+        _load_existing_traces(log_folder_path)
+    else:
+        print(
+            "[rd-agent] skipping eager historical trace replay at startup; "
+            "historical traces will load on demand",
+            flush=True,
+        )
+
     app.wsgi_app = InviteGate(app.wsgi_app)
     app.run(debug=False, host="0.0.0.0", port=port)
 
