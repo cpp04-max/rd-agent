@@ -8,6 +8,12 @@ primary_region = 'lax'
 
 [build]
 
+[deploy]
+  strategy = 'rolling'
+  # RD-Agent can still need time after the Machine starts (volume attach, imports,
+  # qlib initialization). Keep flyctl waiting long enough for health to settle.
+  wait_timeout = '15m'
+
 [http_service]
   internal_port = 19899
   force_https = true
@@ -24,7 +30,7 @@ primary_region = 'lax'
     timeout = '10s'
     # The app loads trace history from the /data volume at boot; on a large trace
     # folder that can exceed 60s, which aborts rolling deploys. Give it 3 minutes.
-    grace_period = '3m0s'
+    grace_period = '1m0s'
     method = 'GET'
     path = '/test'
 
