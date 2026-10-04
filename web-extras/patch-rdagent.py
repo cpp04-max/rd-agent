@@ -915,4 +915,234 @@ patch(
     "P38 skip unreadable historical trace pickles",
 )
 
+
+# ---------------------------------------------------------------- P40 robust structured RESULT replay
+# Historical traces may have been written by an earlier image whose concrete Python
+# classes no longer compare equal to the classes imported by the current image.
+# The pickle still contains the result data, but WebStorage._obj_to_json() can return
+# {} because of isinstance(...) gates. Recover the three core RESULT events by tag
+# and attributes instead: hypothesis generation, runner result, and feedback.
+_TRACE_FALLBACK_HELPER_ANCHOR = '''def read_trace(log_path: Path, id: str = "") -> None:
+'''
+_TRACE_FALLBACK_HELPER = '''def _recover_result_event_from_trace_obj(msg, id: str):
+    """Best-effort compatibility replay for persisted finance RESULT objects.
+
+    This intentionally uses tag + attributes instead of concrete class identity so
+    traces created by older deployments remain viewable after redeploys.
+    """
+    import json as _json
+
+    tag = str(getattr(msg, "tag", "") or "")
+    obj = getattr(msg, "content", None)
+    timestamp = msg.timestamp.isoformat()
+    try:
+        from rdagent.log.utils import extract_loopid_func_name
+        loop_id, _ = extract_loopid_func_name(tag)
+    except Exception:
+        loop_id = None
+
+    if "hypothesis generation" in tag:
+        hypothesis = getattr(obj, "hypothesis", None)
+        if hypothesis is None and isinstance(obj, dict):
+            hypothesis = obj.get("hypothesis")
+        if hypothesis is not None:
+            def _ga(name, default=""):
+                if isinstance(obj, dict):
+                    return obj.get(name, default)
+                return getattr(obj, name, default)
+            return {
+                "id": id,
+                "msg": {
+                    "tag": "research.hypothesis",
+                    "old_tag": tag,
+                    "timestamp": timestamp,
+                    "loop_id": loop_id,
+                    "content": {
+                        "hypothesis": str(hypothesis),
+                        "reason": str(_ga("reason", "") or ""),
+                        "component": str(_ga("component", "") or ""),
+                        "concise_reason": str(_ga("concise_reason", "") or ""),
+                        "concise_justification": str(_ga("concise_justification", "") or ""),
+                        "concise_observation": str(_ga("concise_observation", "") or ""),
+                        "concise_knowledge": str(_ga("concise_knowledge", "") or ""),
+                    },
+                },
+            }
+
+    # Restrict metric recovery to the actual runner-result object; do not treat
+    # arbitrary debug/template objects below Loop_*/running as metrics.
+    if tag.endswith(".running.runner result") or "running.runner result" in tag:
+        result = getattr(obj, "result", None)
+        if result is None and isinstance(obj, dict):
+            result = obj.get("result")
+        if result is not None:
+            try:
+                if hasattr(result, "to_json"):
+                    result_json = result.to_json()
+                elif isinstance(result, str):
+                    # Preserve already-serialized JSON when valid.
+                    _json.loads(result)
+                    result_json = result
+                else:
+                    result_json = _json.dumps(result, default=str)
+                return {
+                    "id": id,
+                    "msg": {
+                        "tag": "feedback.metric",
+                        "old_tag": tag,
+                        "timestamp": timestamp,
+                        "loop_id": loop_id,
+                        "content": {"result": result_json},
+                    },
+                }
+            except Exception:
+                pass
+
+    # Exact persisted tag is Loop_N.feedback.feedback. Avoid debug_llm/token_cost/etc.
+    if tag.endswith(".feedback.feedback") or tag == "feedback":
+        def _gf(name, default=None):
+            if isinstance(obj, dict):
+                return obj.get(name, default)
+            return getattr(obj, name, default)
+
+        decision = _gf("decision", None)
+        observations = _gf("observations", None)
+        reason = _gf("reason", None)
+        hypothesis_evaluation = _gf("hypothesis_evaluation", None)
+        new_hypothesis = _gf("new_hypothesis", None)
+        exception = _gf("exception", None)
+
+        # Require at least one feedback-shaped field so unrelated objects aren't
+        # synthesized into fake RESULT rows.
+        if any(
+            value is not None
+            for value in (
+                decision,
+                observations,
+                reason,
+                hypothesis_evaluation,
+                new_hypothesis,
+                exception,
+            )
+        ):
+            return {
+                "id": id,
+                "msg": {
+                    "tag": "feedback.hypothesis_feedback",
+                    "old_tag": tag,
+                    "timestamp": timestamp,
+                    "loop_id": loop_id,
+                    "content": {
+                        "observations": "" if observations is None else str(observations),
+                        "hypothesis_evaluation": (
+                            "" if hypothesis_evaluation is None else str(hypothesis_evaluation)
+                        ),
+                        "new_hypothesis": "" if new_hypothesis is None else str(new_hypothesis),
+                        "decision": bool(decision) if decision is not None else False,
+                        "reason": "" if reason is None else str(reason),
+                        "exception": "" if exception is None else str(exception),
+                    },
+                },
+            }
+
+    return {}
+
+
+def read_trace(log_path: Path, id: str = "") -> None:
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _TRACE_FALLBACK_HELPER_ANCHOR,
+    _TRACE_FALLBACK_HELPER,
+    "P40 add backward-compatible RESULT event recovery",
+)
+
+# P37 already guards converter failures. Extend it so an empty/unsupported converter
+# result falls back to the compatibility decoder above, and log a replay summary.
+_P40_READ_OLD = '''    task.messages = []
+    last_timestamp = None
+    for msg in fs.iter_msg():
+        try:
+            data = ws._obj_to_json(obj=msg.content, tag=msg.tag, id=id, timestamp=msg.timestamp.isoformat())
+        except Exception:
+            app.logger.exception(
+                "Skipping malformed trace event while replaying %s (tag=%s)",
+                log_path,
+                getattr(msg, "tag", "<unknown>"),
+            )
+            continue
+        if data:
+'''
+_P40_READ_NEW = '''    task.messages = []
+    last_timestamp = None
+    _replay_counts = {
+        "research.hypothesis": 0,
+        "feedback.metric": 0,
+        "feedback.hypothesis_feedback": 0,
+        "feedback.return_chart": 0,
+    }
+    for msg in fs.iter_msg():
+        try:
+            data = ws._obj_to_json(obj=msg.content, tag=msg.tag, id=id, timestamp=msg.timestamp.isoformat())
+        except Exception:
+            app.logger.exception(
+                "Standard trace conversion failed for %s (tag=%s); trying compatibility replay",
+                log_path,
+                getattr(msg, "tag", "<unknown>"),
+            )
+            data = {}
+        if not data:
+            data = _recover_result_event_from_trace_obj(msg, id)
+        if data:
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P40_READ_OLD,
+    _P40_READ_NEW,
+    "P40 fallback to duck-typed RESULT conversion",
+)
+
+_P40_APPEND_OLD = '''            if isinstance(data, list):
+                for d in data:
+                    task.messages.append(d["msg"])
+                    last_timestamp = msg.timestamp
+            else:
+                task.messages.append(data["msg"])
+                last_timestamp = msg.timestamp
+
+    now = datetime.now(timezone.utc)
+'''
+_P40_APPEND_NEW = '''            if isinstance(data, list):
+                for d in data:
+                    _ui_msg = d["msg"]
+                    task.messages.append(_ui_msg)
+                    if _ui_msg.get("tag") in _replay_counts:
+                        _replay_counts[_ui_msg["tag"]] += 1
+                    last_timestamp = msg.timestamp
+            else:
+                _ui_msg = data["msg"]
+                task.messages.append(_ui_msg)
+                if _ui_msg.get("tag") in _replay_counts:
+                    _replay_counts[_ui_msg["tag"]] += 1
+                last_timestamp = msg.timestamp
+
+    app.logger.info(
+        "Trace replay summary for %s: total_ui=%d hypothesis=%d metric=%d feedback=%d chart=%d",
+        log_path,
+        len(task.messages),
+        _replay_counts["research.hypothesis"],
+        _replay_counts["feedback.metric"],
+        _replay_counts["feedback.hypothesis_feedback"],
+        _replay_counts["feedback.return_chart"],
+    )
+
+    now = datetime.now(timezone.utc)
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P40_APPEND_OLD,
+    _P40_APPEND_NEW,
+    "P40 log historical RESULT replay counts",
+)
+
 print("All rdagent patches applied.", flush=True)
