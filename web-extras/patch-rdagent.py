@@ -863,4 +863,56 @@ patch(
     "P37 on-demand persisted trace reload",
 )
 
+
+# ---------------------------------------------------------------- P38 resilient FileStorage replay
+# FileStorage.iter_msg() used to pickle.load EVERY .pkl into an in-memory list before
+# yielding the first message. One historical pickle that references a generated/
+# unavailable class therefore aborted the entire trace replay and left the UI with
+# zero structured events even though later hypothesis/metric/feedback pickles were
+# perfectly valid. Skip only the unreadable pickle and continue replaying the rest.
+_FILE_REPLAY_OLD = '''        for file in self.path.glob(pkl_files):
+            if file.name == "debug_llm.pkl":
+                continue
+            pkl_log_tag = ".".join(file.relative_to(self.path).as_posix().replace("/", ".").split(".")[:-3])
+            pid = file.parent.name
+
+            with file.open("rb") as f:
+                content = pickle.load(f)
+
+            timestamp = datetime.strptime(file.stem, "%Y-%m-%d_%H-%M-%S-%f").replace(tzinfo=timezone.utc)
+
+            m = Message(tag=pkl_log_tag, level="INFO", timestamp=timestamp, caller="", pid_trace=pid, content=content)
+
+            msg_l.append(m)
+'''
+_FILE_REPLAY_NEW = '''        for file in self.path.glob(pkl_files):
+            if file.name == "debug_llm.pkl":
+                continue
+            pkl_log_tag = ".".join(file.relative_to(self.path).as_posix().replace("/", ".").split(".")[:-3])
+            pid = file.parent.name
+
+            try:
+                with file.open("rb") as f:
+                    content = pickle.load(f)
+
+                timestamp = datetime.strptime(file.stem, "%Y-%m-%d_%H-%M-%S-%f").replace(tzinfo=timezone.utc)
+            except Exception as e:
+                print(
+                    f"[rd-agent] WARNING: skipping unreadable trace pickle {file}: "
+                    f"{type(e).__name__}: {e}",
+                    flush=True,
+                )
+                continue
+
+            m = Message(tag=pkl_log_tag, level="INFO", timestamp=timestamp, caller="", pid_trace=pid, content=content)
+
+            msg_l.append(m)
+'''
+patch(
+    "rdagent/log/storage.py",
+    _FILE_REPLAY_OLD,
+    _FILE_REPLAY_NEW,
+    "P38 skip unreadable historical trace pickles",
+)
+
 print("All rdagent patches applied.", flush=True)
