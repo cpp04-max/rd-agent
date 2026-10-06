@@ -72,12 +72,55 @@ def resume_options():
         ), 200
 
     latest = records[-1]
+
+    # Present one intuitive checkpoint per loop for the normal UI. Prefer the
+    # completed "record" checkpoint; if the loop is partial, use its latest
+    # successfully persisted step and label it clearly.
+    loop_map = {}
+    for record in records:
+        loop_map.setdefault(record["loop_index"], []).append(record)
+
+    loop_checkpoints = []
+    for loop_index in sorted(loop_map):
+        candidates = loop_map[loop_index]
+        completed = next(
+            (item for item in candidates if item["step_name"] == "record"),
+            None,
+        )
+        selected = completed or candidates[-1]
+        loop_checkpoints.append(
+            {
+                **selected,
+                "complete": completed is not None,
+                "label": (
+                    f"Loop {selected['loop_number']} · completed"
+                    if completed is not None
+                    else (
+                        f"Loop {selected['loop_number']} · partial "
+                        f"(after {selected['step_name']})"
+                    )
+                ),
+            }
+        )
+
+    resume_meta = None
+    meta_path = source_dir / "_resume_meta.json"
+    if meta_path.exists():
+        try:
+            import json as _json
+
+            resume_meta = _json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            resume_meta = None
+
     return jsonify(
         {
             "source_id": source_id,
             "resumable": True,
             "latest": latest,
+            "loop_checkpoints": loop_checkpoints,
             "checkpoints": records,
+            "resume_meta": resume_meta,
         }
     ), 200
 
