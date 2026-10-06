@@ -62,9 +62,11 @@ primary_region = 'lax'
   destination = "/data"
 
 [[vm]]
-  # Sized for the RD-Agent(Q) qlib/LightGBM backtests: dedicated cores (no noisy
-  # neighbour) let LightGBM/pandas parallelise; 4 GB removes the OOM cliff on CSI300.
+  # TimeSeries GRU + CSI300 backtest can hold the train/valid/test tensors and
+  # Qlib exchange/backtest state at the same time. The previous 4 GB machine was
+  # observed being killed during backtest after successful prediction generation.
+  # Keep CPU unchanged but give the process enough headroom to avoid the OOM cliff.
   # No GPU is needed - all LLM inference is remote (DashScope) and training is CPU.
   cpu_kind = 'performance'
   cpus = 2
-  memory_mb = 4096
+  memory_mb = 8192

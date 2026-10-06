@@ -48,6 +48,57 @@ def _resume_checkpoint_records(trace_dir: Path):
     return records
 
 
+def _resume_execution_failure_reason(checkpoint_path: Path):
+    """Best-effort classification of a persisted loop as an execution failure.
+
+    New P46 checkpoints carry _execution_failure_pending. Older P42/P43 record
+    checkpoints can still be classified from their latest feedback text.
+    """
+    try:
+        import pickle as _pickle
+
+        with checkpoint_path.open("rb") as _fh:
+            state = _pickle.load(_fh)
+
+        pending = getattr(state, "_execution_failure_pending", None)
+        if pending:
+            return str(pending)
+
+        trace = getattr(state, "trace", None)
+        hist = getattr(trace, "hist", None) or []
+        if not hist:
+            return None
+        feedback = hist[-1][1]
+        pieces = [
+            getattr(feedback, "reason", None),
+            getattr(feedback, "observations", None),
+            getattr(feedback, "exception", None),
+        ]
+        text = "\n".join(str(item) for item in pieces if item)
+        lower = text.lower()
+        markers = (
+            "failed to run this experiment",
+            "qrun_exit_code=",
+            "no result file found",
+            "process was killed",
+            "\nkilled",
+            "qrun timed out",
+            "running time exceeds",
+        )
+        if any(marker in lower for marker in markers) or (
+            "failed to run " in lower and " model, because " in lower
+        ):
+            if "killed" in lower or "qrun_exit_code=137" in lower or "qrun_exit_code=-9" in lower:
+                return (
+                    "Execution failed: Qlib was killed before producing a complete "
+                    "backtest result; retry from the coding checkpoint after checking memory."
+                )
+            return "Execution failed: retry this loop from the coding checkpoint."
+    except Exception:
+        return None
+    return None
+
+
 @app.route("/resume/options", methods=["GET"])
 def resume_options():
     source_id = request.args.get("id", "")
@@ -87,17 +138,42 @@ def resume_options():
             (item for item in candidates if item["step_name"] == "record"),
             None,
         )
-        selected = completed or candidates[-1]
+        execution_failure_reason = (
+            _resume_execution_failure_reason(Path(completed["path"]))
+            if completed is not None
+            else None
+        )
+        retry_checkpoint = None
+        if execution_failure_reason:
+            # "after coding" means the generated hypothesis/code is durable but
+            # running has not yet succeeded. Resuming here reruns the SAME experiment
+            # instead of asking the LLM for another hypothesis.
+            retry_checkpoint = next(
+                (item for item in reversed(candidates) if item["step_name"] == "coding"),
+                None,
+            )
+
+        selected = retry_checkpoint or completed or candidates[-1]
         loop_checkpoints.append(
             {
                 **selected,
                 "complete": completed is not None,
+                "execution_failed": bool(execution_failure_reason),
+                "failure_reason": execution_failure_reason,
                 "label": (
-                    f"Loop {selected['loop_number']} · completed"
-                    if completed is not None
+                    f"Loop {selected['loop_number']} · execution failed · retry run"
+                    if execution_failure_reason and retry_checkpoint is not None
                     else (
-                        f"Loop {selected['loop_number']} · partial "
-                        f"(after {selected['step_name']})"
+                        f"Loop {selected['loop_number']} · execution failed"
+                        if execution_failure_reason
+                        else (
+                            f"Loop {selected['loop_number']} · completed"
+                            if completed is not None
+                            else (
+                                f"Loop {selected['loop_number']} · partial "
+                                f"(after {selected['step_name']})"
+                            )
+                        )
                     )
                 ),
             }
@@ -170,8 +246,24 @@ def resume_trace():
             }
         ), 409
 
+    auto_retry_execution = False
     if checkpoint_key == "latest":
         selected = records[-1]
+        if selected["step_name"] == "record":
+            execution_failure_reason = _resume_execution_failure_reason(Path(selected["path"]))
+            if execution_failure_reason:
+                retry_checkpoint = next(
+                    (
+                        item
+                        for item in reversed(records)
+                        if item["loop_index"] == selected["loop_index"]
+                        and item["step_name"] == "coding"
+                    ),
+                    None,
+                )
+                if retry_checkpoint is not None:
+                    selected = retry_checkpoint
+                    auto_retry_execution = True
     else:
         selected = next((r for r in records if r["key"] == checkpoint_key), None)
         if selected is None:
@@ -180,8 +272,12 @@ def resume_trace():
     source_name = source_dir.name
     suffix = randomname.get_name()
     if checkpoint_key == "latest":
-        branch_name = f"{source_name}-cont-{suffix}"
-        resume_mode = "continue"
+        if auto_retry_execution:
+            branch_name = f"{source_name}-retry-{suffix}"
+            resume_mode = "retry_execution"
+        else:
+            branch_name = f"{source_name}-cont-{suffix}"
+            resume_mode = "continue"
     else:
         branch_name = f"{source_name}-L{selected['loop_number']}-{suffix}"
         resume_mode = "branch"
