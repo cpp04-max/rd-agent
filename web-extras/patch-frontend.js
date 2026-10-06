@@ -1326,6 +1326,7 @@ const historyTraceCheckedItem = (data) => {
 };`;
 
 const historyHandlersNew = `const resetHistoryResumeState = () => {
+  historyResumeLoading.value = false;
   historyResumeInfo.value = null;
   historyResumeError.value = "";
   historyResumeCheckpoint.value = "";
