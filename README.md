@@ -168,7 +168,12 @@ Runs created after the resume feature is deployed persist workflow checkpoints u
 /data/traces/Finance Whole Pipeline/<trace>/__session__/<loop>/<step>_<name>
 ```
 
-Open a completed run's **RESULT** tab and choose **CONTINUE / BRANCH**.
+You can resume in two places:
+
+1. From the **Start** page, choose **View previous traces?**. The history screen now lets you select an **experiment**, then a **loop**, then enter a new instruction / loop count / time budget and start the continuation directly.
+2. From an already-open completed run's **RESULT** tab, choose **CONTINUE / BRANCH**.
+
+The history workflow is the recommended path when you have many experiments and want to branch from a specific earlier loop.
 
 - **Latest state** creates a non-destructive continuation from the most recent checkpoint.
 - Choosing a historical checkpoint creates a branch from that loop/step.

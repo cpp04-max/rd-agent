@@ -1068,3 +1068,548 @@ resultS42 =
 fs.writeFileSync(resultP42, resultS42);
 console.log("[patch-frontend] P42 Continue / Branch UI applied to ResultPage.vue");
 
+// ------------------------- P43: select experiment + loop from history -------------------------
+const historyP43 = "/src/web/src/views/Playground.vue";
+let historyS43 = fs.readFileSync(historyP43, "utf8");
+
+const historyApiOld =
+  'import { getHistoryTraceIds, uploadFile } from "../utils/api";';
+const historyApiNew =
+  'import { getHistoryTraceIds, uploadFile, getResumeOptions, resumeTrace } from "../utils/api";';
+if (!historyS43.includes(historyApiOld)) {
+  console.error("[patch-frontend] FAILED: P43 Playground api import anchor drifted.");
+  process.exit(1);
+}
+historyS43 = historyS43.replace(historyApiOld, historyApiNew);
+
+const historyPanelOld = `      <div class="main-content" v-show="showPanel == 3">
+        <h1 class="h1">
+          View traces from previous runs <br />
+          and inspect their execution history.
+        </h1>
+        <div class="main-panel history-panel">
+          <div class="title">Trace ID List</div>
+          <div class="desc">
+            <p>Pick a scenario first, then choose one of its trace names</p>
+          </div>
+          <div class="history-select-row">
+            <div class="history-select-item">
+              <div class="title small-config-title">Scenario</div>
+              <smSelectComponent
+                :scenarioList="historyScenarioList"
+                :scenarioIndex="historyScenarioCheckedIndex"
+                placeholder="Select a scenario"
+                @scenarioCheckedItem="historyScenarioCheckedItem"
+              ></smSelectComponent>
+            </div>
+            <div class="history-select-item">
+              <div class="title small-config-title">Trace name</div>
+              <smSelectComponent
+                :scenarioList="historyTraceList"
+                :scenarioIndex="historyTraceCheckedIndex"
+                placeholder="Select a trace name"
+                @scenarioCheckedItem="historyTraceCheckedItem"
+              ></smSelectComponent>
+            </div>
+          </div>
+          <div
+            class="btn-main"
+            :style="{
+              'margin-top':
+                scenarioChecked && scenarioChecked.upload ? '3.5em' : '7.5em',
+            }"
+          >
+            <button class="gradient-border back" @click="Back">BACK</button>
+            <button
+              class="disable"
+              :class="{
+                active: historyTraceChecked,
+                disable: !historyTraceChecked,
+              }"
+              @click="viewTracePage"
+            >
+              view trace
+            </button>
+          </div>
+        </div>
+      </div>`;
+
+const historyPanelNew = `      <div class="main-content" v-show="showPanel == 3">
+        <h1 class="h1">
+          Continue a previous experiment <br />
+          from any durable loop checkpoint.
+        </h1>
+        <div class="main-panel history-panel history-resume-panel">
+          <div class="title">Select experiment</div>
+          <div class="desc">
+            <p>
+              Choose a previous experiment, then choose the loop state you want to
+              continue from. The original experiment is never modified.
+            </p>
+          </div>
+
+          <div class="history-select-row">
+            <div class="history-select-item">
+              <div class="title small-config-title">Scenario</div>
+              <smSelectComponent
+                :scenarioList="historyScenarioList"
+                :scenarioIndex="historyScenarioCheckedIndex"
+                placeholder="Select a scenario"
+                @scenarioCheckedItem="historyScenarioCheckedItem"
+              ></smSelectComponent>
+            </div>
+            <div class="history-select-item">
+              <div class="title small-config-title">Experiment</div>
+              <smSelectComponent
+                :scenarioList="historyTraceList"
+                :scenarioIndex="historyTraceCheckedIndex"
+                placeholder="Select an experiment"
+                @scenarioCheckedItem="historyTraceCheckedItem"
+              ></smSelectComponent>
+            </div>
+          </div>
+
+          <div v-if="historyTraceChecked" class="history-resume-config">
+            <div v-if="historyResumeLoading" class="history-resume-status">
+              Loading durable loop checkpoints…
+            </div>
+
+            <div v-else-if="historyResumeError" class="history-resume-status error">
+              {{ historyResumeError }}
+            </div>
+
+            <template v-else-if="historyResumeInfo && historyResumeInfo.resumable">
+              <div class="history-resume-source">
+                <span class="history-resume-source-label">Source experiment</span>
+                <strong>{{ historyTraceChecked.name }}</strong>
+                <span v-if="historyResumeInfo.resume_meta?.source_id" class="history-lineage">
+                  branched from {{ historyResumeInfo.resume_meta.source_id }}
+                </span>
+              </div>
+
+              <div class="history-resume-grid">
+                <label class="history-resume-field">
+                  <span>Continue from loop</span>
+                  <select v-model="historyResumeCheckpoint">
+                    <option
+                      v-for="checkpoint in historyResumeLoopOptions"
+                      :key="checkpoint.key"
+                      :value="checkpoint.key"
+                    >
+                      {{ checkpoint.label }}
+                    </option>
+                  </select>
+                </label>
+
+                <label class="history-resume-field">
+                  <span>Additional loops</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="100"
+                    v-model.number="historyResumeAdditionalLoops"
+                  />
+                </label>
+
+                <label class="history-resume-field">
+                  <span>New time budget (hours)</span>
+                  <input
+                    type="number"
+                    min="0.25"
+                    max="72"
+                    step="0.25"
+                    v-model.number="historyResumeHours"
+                  />
+                </label>
+              </div>
+
+              <label class="history-resume-field history-resume-instruction">
+                <span>New input / research instruction (optional)</span>
+                <textarea
+                  rows="5"
+                  v-model="historyResumeInstruction"
+                  placeholder="Example: Continue from this loop's SOTA state, but focus the next experiments on recency bias and cost-aware loss. Do not repeat the failed multi-window direction."
+                ></textarea>
+              </label>
+
+              <div class="history-resume-note">
+                The new run inherits the selected loop's research state, SOTA, factors,
+                model history and prior evidence. Your new instruction is added as the
+                active research direction for the continuation.
+              </div>
+            </template>
+
+            <div
+              v-else-if="historyResumeInfo && !historyResumeInfo.resumable"
+              class="history-resume-status unavailable"
+            >
+              {{
+                historyResumeInfo.message ||
+                "This experiment does not contain durable resume checkpoints."
+              }}
+              <div class="history-resume-small">
+                You can still view its results. Experiments created after P42/P43 is
+                deployed will expose loop checkpoints here.
+              </div>
+            </div>
+          </div>
+
+          <div class="history-resume-actions">
+            <button class="gradient-border back" @click="Back">BACK</button>
+            <div class="history-resume-actions-right">
+              <button
+                class="history-secondary-btn"
+                :disabled="!historyTraceChecked"
+                @click="viewTracePage"
+              >
+                VIEW RESULT
+              </button>
+              <button
+                class="history-primary-btn"
+                :disabled="
+                  !historyTraceChecked ||
+                  !historyResumeInfo?.resumable ||
+                  !historyResumeCheckpoint ||
+                  historyResumeSubmitting
+                "
+                @click="startHistoryResume"
+              >
+                {{
+                  historyResumeSubmitting
+                    ? "STARTING…"
+                    : "CONTINUE FROM SELECTED LOOP"
+                }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>`;
+
+if (!historyS43.includes(historyPanelOld)) {
+  console.error("[patch-frontend] FAILED: P43 history panel anchor drifted.");
+  process.exit(1);
+}
+historyS43 = historyS43.replace(historyPanelOld, historyPanelNew);
+
+const historyStateAnchor = `const historyTraceChecked = ref(null);
+const selectedFiles = ref([]);`;
+
+const historyStateNew = `const historyTraceChecked = ref(null);
+const historyResumeLoading = ref(false);
+const historyResumeSubmitting = ref(false);
+const historyResumeInfo = ref(null);
+const historyResumeError = ref("");
+const historyResumeCheckpoint = ref("");
+const historyResumeAdditionalLoops = ref(5);
+const historyResumeHours = ref(6);
+const historyResumeInstruction = ref("");
+const historyResumeLoopOptions = computed(() =>
+  Array.isArray(historyResumeInfo.value?.loop_checkpoints)
+    ? historyResumeInfo.value.loop_checkpoints
+    : []
+);
+const selectedFiles = ref([]);`;
+
+if (!historyS43.includes(historyStateAnchor)) {
+  console.error("[patch-frontend] FAILED: P43 history state anchor drifted.");
+  process.exit(1);
+}
+historyS43 = historyS43.replace(historyStateAnchor, historyStateNew);
+
+const historyHandlersOld = `const historyScenarioCheckedItem = (data) => {
+  selectLastHistoryTrace(data.scenarioChecked, data.scenarioCheckedIndex);
+};
+
+const historyTraceCheckedItem = (data) => {
+  historyTraceCheckedIndex.value = data.scenarioCheckedIndex;
+  historyTraceChecked.value = data.scenarioChecked;
+};`;
+
+const historyHandlersNew = `const resetHistoryResumeState = () => {
+  historyResumeLoading.value = false;
+  historyResumeInfo.value = null;
+  historyResumeError.value = "";
+  historyResumeCheckpoint.value = "";
+  historyResumeInstruction.value = "";
+};
+
+const loadHistoryResumeOptions = async () => {
+  resetHistoryResumeState();
+  const traceId = String(historyTraceChecked.value?.id || "").trim();
+  if (!traceId) return;
+
+  if (!traceId.startsWith("Finance Whole Pipeline/")) {
+    historyResumeInfo.value = {
+      resumable: false,
+      message: "Continuation is supported only for Finance Whole Pipeline experiments.",
+    };
+    return;
+  }
+
+  historyResumeLoading.value = true;
+  const requestedTraceId = traceId;
+  try {
+    const info = await getResumeOptions(traceId);
+    if (String(historyTraceChecked.value?.id || "").trim() !== requestedTraceId) {
+      return;
+    }
+    historyResumeInfo.value = info || {};
+    const loops = Array.isArray(info?.loop_checkpoints)
+      ? info.loop_checkpoints
+      : [];
+    historyResumeCheckpoint.value = loops.length
+      ? loops[loops.length - 1].key
+      : info?.latest?.key || "";
+  } catch (error) {
+    if (String(historyTraceChecked.value?.id || "").trim() !== requestedTraceId) {
+      return;
+    }
+    historyResumeError.value =
+      error?.response?.data?.error ||
+      error?.message ||
+      "Failed to load experiment loop checkpoints.";
+  } finally {
+    if (String(historyTraceChecked.value?.id || "").trim() === requestedTraceId) {
+      historyResumeLoading.value = false;
+    }
+  }
+};
+
+const historyScenarioCheckedItem = (data) => {
+  selectLastHistoryTrace(data.scenarioChecked, data.scenarioCheckedIndex);
+  void loadHistoryResumeOptions();
+};
+
+const historyTraceCheckedItem = (data) => {
+  historyTraceCheckedIndex.value = data.scenarioCheckedIndex;
+  historyTraceChecked.value = data.scenarioChecked;
+  void loadHistoryResumeOptions();
+};`;
+
+if (!historyS43.includes(historyHandlersOld)) {
+  console.error("[patch-frontend] FAILED: P43 history handler anchor drifted.");
+  process.exit(1);
+}
+historyS43 = historyS43.replace(historyHandlersOld, historyHandlersNew);
+
+const historyBuildOld = `  selectLastHistoryTrace(defaultScenario, defaultScenarioIndex);
+}`;
+
+const historyBuildNew = `  selectLastHistoryTrace(defaultScenario, defaultScenarioIndex);
+  await loadHistoryResumeOptions();
+}`;
+
+if (!historyS43.includes(historyBuildOld)) {
+  console.error("[patch-frontend] FAILED: P43 history list anchor drifted.");
+  process.exit(1);
+}
+historyS43 = historyS43.replace(historyBuildOld, historyBuildNew);
+
+const historyStartAnchor = `const viewTracePage = () => {`;
+
+const historyStartMethods = `const startHistoryResume = async () => {
+  const sourceId = String(historyTraceChecked.value?.id || "").trim();
+  const loops = Number(historyResumeAdditionalLoops.value);
+  const hours = Number(historyResumeHours.value);
+
+  if (!sourceId || !historyResumeCheckpoint.value) {
+    historyResumeError.value = "Select an experiment and a loop first.";
+    return;
+  }
+  if (!Number.isInteger(loops) || loops < 1 || loops > 100) {
+    historyResumeError.value =
+      "Additional loops must be an integer between 1 and 100.";
+    return;
+  }
+  if (!Number.isFinite(hours) || hours <= 0 || hours > 72) {
+    historyResumeError.value =
+      "New time budget must be greater than 0 and at most 72 hours.";
+    return;
+  }
+
+  historyResumeSubmitting.value = true;
+  historyResumeError.value = "";
+  try {
+    const result = await resumeTrace({
+      source_id: sourceId,
+      checkpoint: historyResumeCheckpoint.value,
+      additional_loops: loops,
+      all_duration: hours,
+      instruction: historyResumeInstruction.value,
+    });
+
+    const newTraceId = String(result?.id || "").trim();
+    if (!newTraceId) {
+      throw new Error("Continuation started but no new trace ID was returned.");
+    }
+
+    applyScenarioConfig(getScenarioConfigByName("Finance Whole Pipeline"));
+    id.value = newTraceId;
+    showPlayground.value = true;
+    ElMessage.success(
+      "Continuation started from the selected experiment loop."
+    );
+  } catch (error) {
+    historyResumeError.value =
+      error?.response?.data?.error ||
+      error?.message ||
+      "Failed to continue the selected experiment.";
+  } finally {
+    historyResumeSubmitting.value = false;
+  }
+};
+
+`;
+
+if (!historyS43.includes(historyStartAnchor)) {
+  console.error("[patch-frontend] FAILED: P43 viewTracePage anchor drifted.");
+  process.exit(1);
+}
+historyS43 = historyS43.replace(
+  historyStartAnchor,
+  historyStartMethods + historyStartAnchor
+);
+
+const historyStyleEnd = "</style>";
+const historyStyle = `
+.history-resume-panel {
+  width: min(980px, 92vw) !important;
+  max-width: 980px !important;
+}
+.history-resume-config {
+  margin-top: 1.4em;
+  padding-top: 1.2em;
+  border-top: 1px solid var(--card-border-color);
+}
+.history-resume-source {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55em 0.8em;
+  align-items: center;
+  margin-bottom: 1em;
+  padding: 0.75em 0.9em;
+  border-radius: 12px;
+  background: var(--card-bg-hover-color);
+}
+.history-resume-source-label,
+.history-lineage {
+  color: #6f7890;
+  font-size: 0.82em;
+}
+.history-resume-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 1em;
+}
+.history-resume-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45em;
+}
+.history-resume-field > span {
+  font-size: 0.9em;
+  font-weight: 700;
+  color: var(--text-color);
+}
+.history-resume-field select,
+.history-resume-field input,
+.history-resume-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--card-border-color);
+  border-radius: 10px;
+  padding: 0.72em 0.85em;
+  background: var(--bg-white);
+  color: var(--text-color);
+  font: inherit;
+}
+.history-resume-instruction {
+  margin-top: 1em;
+}
+.history-resume-field textarea {
+  min-height: 7em;
+  resize: vertical;
+}
+.history-resume-note,
+.history-resume-status {
+  margin-top: 1em;
+  padding: 0.8em 0.95em;
+  border-radius: 10px;
+  background: #f5f7ff;
+  color: #5a637c;
+  font-size: 0.86em;
+  line-height: 1.55;
+}
+.history-resume-status.error {
+  background: #fff1f1;
+  color: #a73535;
+}
+.history-resume-status.unavailable {
+  background: #f7f8fb;
+}
+.history-resume-small {
+  margin-top: 0.35em;
+  color: #7a8296;
+  font-size: 0.92em;
+}
+.history-resume-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1em;
+  margin-top: 1.6em;
+}
+.history-resume-actions-right {
+  display: flex;
+  gap: 0.8em;
+}
+.history-primary-btn,
+.history-secondary-btn {
+  min-height: 3em;
+  border-radius: 999px;
+  padding: 0 1.3em;
+  font-weight: 800;
+  cursor: pointer;
+}
+.history-primary-btn {
+  border: 0;
+  background: linear-gradient(90deg, #2667ff 0%, #9d41ff 100%);
+  color: white;
+}
+.history-secondary-btn {
+  border: 1px solid var(--card-border-color);
+  background: var(--bg-white);
+  color: var(--text-color);
+}
+.history-primary-btn:disabled,
+.history-secondary-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+@media (max-width: 900px) {
+  .history-resume-grid {
+    grid-template-columns: 1fr;
+  }
+  .history-resume-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .history-resume-actions-right {
+    flex-direction: column;
+  }
+}
+`;
+
+const historyStylePos = historyS43.lastIndexOf(historyStyleEnd);
+if (historyStylePos === -1) {
+  console.error("[patch-frontend] FAILED: P43 Playground style end missing.");
+  process.exit(1);
+}
+historyS43 =
+  historyS43.slice(0, historyStylePos) +
+  historyStyle +
+  historyS43.slice(historyStylePos);
+
+fs.writeFileSync(historyP43, historyS43);
+console.log("[patch-frontend] P43 experiment + loop resume selector applied to Playground.vue");
+
