@@ -1627,3 +1627,746 @@ if (!fs.existsSync(metricBoxP44)) {
 fs.writeFileSync(metricBoxP44, metricBoxNewP44);
 console.log("[patch-frontend] P44 readable grouped metric UI applied to chartBox.vue");
 
+// ------------------------- P45: metric definitions + formulas -------------------------
+// Keep the P44 cards compact. Definitions/formulas live behind a per-card info button
+// and a global Metric Guide so users can understand Qlib semantics without clutter.
+const metricGuideP45 = "/src/web/src/components/chartBox.vue";
+let metricGuideS45 = fs.readFileSync(metricGuideP45, "utf8");
+
+const toolbarP45Old = `      <div class="metric-help">
+        <span>↑ higher is better</span>
+        <span>↓ lower is better</span>
+        <span>0↑ closer to zero is better</span>
+      </div>`;
+const toolbarP45New = `      <div class="metric-toolbar-side">
+        <div class="metric-help">
+          <span>↑ higher is better</span>
+          <span>↓ lower is better</span>
+          <span>0↑ closer to zero is better</span>
+        </div>
+        <button
+          type="button"
+          class="metric-guide-btn"
+          @click="openMetricGuide()"
+        >
+          ⓘ Metric guide
+        </button>
+      </div>`;
+if (!metricGuideS45.includes(toolbarP45Old)) {
+  console.error("[patch-frontend] FAILED: P45 metric toolbar anchor drifted.");
+  process.exit(1);
+}
+metricGuideS45 = metricGuideS45.replace(toolbarP45Old, toolbarP45New);
+
+const footerP45Old = `        <div class="metric-raw-name">{{ item.key }}</div>`;
+const footerP45New = `        <div class="metric-card-footer">
+          <div class="metric-raw-name">{{ item.key }}</div>
+          <button
+            type="button"
+            class="metric-info-btn"
+            title="Definition and formula"
+            @click="openMetricGuide(item)"
+          >
+            ⓘ
+          </button>
+        </div>`;
+if (!metricGuideS45.includes(footerP45Old)) {
+  console.error("[patch-frontend] FAILED: P45 metric card footer anchor drifted.");
+  process.exit(1);
+}
+metricGuideS45 = metricGuideS45.replace(footerP45Old, footerP45New);
+
+const dialogP45Anchor = `    <div class="dialog-box" v-if="showDialog">`;
+const guideP45 = `    <div
+      class="metric-guide-overlay"
+      v-if="showMetricGuide"
+      @click.self="closeMetricGuide"
+    >
+      <div class="metric-guide-card">
+        <div class="metric-guide-head">
+          <div>
+            <div class="metric-guide-kicker">QLIB METRIC REFERENCE</div>
+            <h2>{{ selectedGuideMetric ? selectedGuideMetric.label : "Metric Guide" }}</h2>
+            <p v-if="selectedGuideMetric" class="metric-guide-raw">
+              {{ selectedGuideMetric.key }}
+            </p>
+            <p v-else>
+              Definitions and formulas for the metrics currently present in this experiment.
+              Qlib's daily risk metrics use its arithmetic accumulation convention.
+            </p>
+          </div>
+          <button
+            type="button"
+            class="metric-guide-close"
+            aria-label="Close metric guide"
+            @click="closeMetricGuide"
+          >
+            ×
+          </button>
+        </div>
+
+        <template v-if="selectedGuideMetric">
+          <div class="metric-guide-detail">
+            <div class="metric-guide-badges">
+              <span class="metric-guide-group">{{ selectedGuideMetric.groupLabel }}</span>
+              <span
+                v-if="selectedGuideMetric.goal"
+                class="metric-goal"
+                :class="'goal-' + selectedGuideMetric.goalKind"
+              >
+                {{ selectedGuideMetric.goal }}
+              </span>
+            </div>
+
+            <section class="metric-guide-section">
+              <h3>Definition</h3>
+              <p>{{ selectedGuideMetric.guide.definition }}</p>
+            </section>
+
+            <section class="metric-guide-section">
+              <h3>Formula</h3>
+              <code class="metric-formula">{{ selectedGuideMetric.guide.formula }}</code>
+            </section>
+
+            <section class="metric-guide-section">
+              <h3>How to read it</h3>
+              <p>{{ selectedGuideMetric.guide.interpretation }}</p>
+            </section>
+
+            <section
+              class="metric-guide-section metric-guide-note"
+              v-if="selectedGuideMetric.guide.note"
+            >
+              <h3>Qlib note</h3>
+              <p>{{ selectedGuideMetric.guide.note }}</p>
+            </section>
+
+            <button
+              type="button"
+              class="metric-guide-back"
+              @click="selectedGuideMetric = null"
+            >
+              ← All metrics
+            </button>
+          </div>
+        </template>
+
+        <div v-else class="metric-guide-list">
+          <button
+            v-for="item in guideMetrics"
+            :key="item.key"
+            type="button"
+            class="metric-guide-list-item"
+            @click="selectedGuideMetric = item"
+          >
+            <div class="metric-guide-list-top">
+              <div>
+                <span class="metric-guide-list-group">{{ item.groupLabel }}</span>
+                <strong>{{ item.label }}</strong>
+              </div>
+              <span
+                v-if="item.goal"
+                class="metric-goal"
+                :class="'goal-' + item.goalKind"
+              >
+                {{ item.goal }}
+              </span>
+            </div>
+            <p>{{ item.guide.definition }}</p>
+            <code>{{ item.guide.formula }}</code>
+          </button>
+        </div>
+
+        <div class="metric-guide-foot">
+          <strong>Notation:</strong>
+          ŷ = model score/prediction; y = realized label/return; i = instrument;
+          t = date; A = annualization factor. For Qlib daily risk analysis, A = 238.
+        </div>
+      </div>
+    </div>
+
+`;
+if (!metricGuideS45.includes(dialogP45Anchor)) {
+  console.error("[patch-frontend] FAILED: P45 dialog anchor drifted.");
+  process.exit(1);
+}
+metricGuideS45 = metricGuideS45.replace(dialogP45Anchor, guideP45 + dialogP45Anchor);
+
+const stateP45Anchor = `const dialogName = ref("");`;
+const stateP45New = `const dialogName = ref("");
+const showMetricGuide = ref(false);
+const selectedGuideMetric = ref(null);`;
+if (!metricGuideS45.includes(stateP45Anchor)) {
+  console.error("[patch-frontend] FAILED: P45 metric guide state anchor drifted.");
+  process.exit(1);
+}
+metricGuideS45 = metricGuideS45.replace(stateP45Anchor, stateP45New);
+
+const metricGoalP45Anchor = `const metricSortRank = (key) => {`;
+const metricGuideLogicP45 = `const metricGuideInfo = (key) => {
+  const raw = String(key || "");
+  const lower = raw.toLowerCase();
+  const isWithCost = lower.includes("with_cost");
+  const isWithoutCost = lower.includes("without_cost");
+  const returnLabel = isWithCost
+    ? "net excess return after transaction costs"
+    : isWithoutCost
+      ? "gross excess return before transaction costs"
+      : "return series";
+
+  if (raw === "IC") {
+    return {
+      definition:
+        "Mean daily cross-sectional Pearson correlation between the model score and the realized label.",
+      formula:
+        "IC_t = Corr_i(ŷ_{i,t}, y_{i,t});   IC = mean_t(IC_t)",
+      interpretation:
+        "Measures linear predictive alignment across instruments. Positive is desirable; larger positive values imply stronger signal.",
+      note:
+        "Qlib computes Pearson correlation separately for each date, then reports the mean across dates.",
+    };
+  }
+
+  if (raw === "ICIR") {
+    return {
+      definition:
+        "Stability of daily IC over time: average daily IC divided by the standard deviation of daily IC.",
+      formula:
+        "ICIR = mean_t(IC_t) / std_t(IC_t)",
+      interpretation:
+        "A higher positive ICIR means the predictive relationship is not only positive on average but also more consistent through time.",
+      note:
+        "Qlib's SigAnaRecord uses mean(IC_t) / std(IC_t) directly; it is not annualized.",
+    };
+  }
+
+  if (raw === "Rank IC") {
+    return {
+      definition:
+        "Mean daily cross-sectional Spearman rank correlation between model scores and realized labels.",
+      formula:
+        "RIC_t = Corr_i(rank(ŷ_{i,t}), rank(y_{i,t}));   Rank IC = mean_t(RIC_t)",
+      interpretation:
+        "Measures whether the model orders instruments correctly, even when the score-to-return relationship is nonlinear.",
+      note:
+        "Qlib implements this as a per-date Spearman correlation and then averages across dates.",
+    };
+  }
+
+  if (raw === "Rank ICIR") {
+    return {
+      definition:
+        "Stability of daily Rank IC over time.",
+      formula:
+        "Rank ICIR = mean_t(RIC_t) / std_t(RIC_t)",
+      interpretation:
+        "Higher positive values indicate that the model's cross-sectional ranking quality is more stable across dates.",
+      note:
+        "Like ICIR, Qlib reports a non-annualized mean-to-standard-deviation ratio.",
+    };
+  }
+
+  if (lower.includes("annualized_return")) {
+    return {
+      definition:
+        "Annualized " + returnLabel + ".",
+      formula:
+        "Annualized Return = A × mean_t(r_t);   for Qlib daily analysis, A = 238",
+      interpretation:
+        isWithCost
+          ? "This is the most direct economic metric: positive and higher is better after trading costs."
+          : "Shows gross economic performance before trading costs. Compare it with the with-cost version to understand cost drag.",
+      note:
+        "Qlib's default risk_analysis(mode='sum') uses arithmetic accumulation rather than compounded CAGR.",
+    };
+  }
+
+  if (lower.includes("information_ratio")) {
+    return {
+      definition:
+        "Risk-adjusted " + returnLabel + ": average excess return scaled by its volatility.",
+      formula:
+        "Information Ratio = mean_t(r_t) / std_t(r_t) × √A;   A = 238 for Qlib daily analysis",
+      interpretation:
+        "Higher positive values mean the strategy earns more excess return per unit of variability.",
+      note:
+        "For keys under excess_return_with_cost, r_t includes transaction-cost drag; without_cost excludes it.",
+    };
+  }
+
+  if (lower.includes("max_drawdown")) {
+    return {
+      definition:
+        "Worst peak-to-trough decline of the cumulative " + returnLabel + " curve.",
+      formula:
+        "C_t = Σ_{u≤t} r_u;   MDD = min_t(C_t − max_{s≤t} C_s)",
+      interpretation:
+        "Qlib reports this as a negative number in the default arithmetic mode. A value closer to 0 means a smaller drawdown.",
+      note:
+        "This follows Qlib's default sum-mode cumulative return curve, not the geometric wealth-curve drawdown formula.",
+    };
+  }
+
+  if (
+    lower.endsWith(".mean") ||
+    lower === "mean" ||
+    lower.includes(".mean.")
+  ) {
+    return {
+      definition:
+        "Average value of the underlying daily " + returnLabel + ".",
+      formula:
+        "mean = (1/T) × Σ_t r_t",
+      interpretation:
+        "Useful as the unannualized daily return level; interpret together with volatility and annualized return.",
+      note: "",
+    };
+  }
+
+  if (
+    lower.endsWith(".std") ||
+    lower === "std" ||
+    lower.includes(".std.")
+  ) {
+    return {
+      definition:
+        "Sample standard deviation of the underlying daily " + returnLabel + ".",
+      formula:
+        "std = √[ Σ_t(r_t − mean(r))² / (T − 1) ]",
+      interpretation:
+        "Measures variability/risk of the daily series. Lower is generally preferable for the same level of return.",
+      note: "",
+    };
+  }
+
+  if (raw === "l2.train" || raw === "l2.valid") {
+    const split = raw === "l2.train" ? "training" : "validation";
+    return {
+      definition:
+        "L2 / mean-squared prediction loss on the " + split + " sample.",
+      formula:
+        "L2 = (1/N) × Σ_j (ŷ_j − y_j)²",
+      interpretation:
+        raw === "l2.train"
+          ? "Lower means a better fit to the training sample, but very low training loss alone can indicate overfitting."
+          : "Lower validation loss usually indicates better generalization. Rising validation loss while train loss falls is an overfitting warning.",
+      note:
+        "This is a model-fit metric, not a trading metric; prioritize IC and after-cost portfolio metrics for research decisions.",
+    };
+  }
+
+  if (lower.includes("turnover")) {
+    return {
+      definition:
+        "How much of the portfolio is replaced/rebalanced over time.",
+      formula:
+        "Typical form: Turnover_t ≈ ½ × Σ_i |w_{i,t} − w^{drift}_{i,t−1}|",
+      interpretation:
+        "Lower turnover usually means lower transaction-cost pressure, but the exact desirable level depends on signal horizon and strategy.",
+      note:
+        "Exact turnover aggregation can depend on the Qlib strategy/recorder that produced this raw key.",
+    };
+  }
+
+  if (lower.includes("sharpe")) {
+    return {
+      definition:
+        "Annualized average return divided by return volatility.",
+      formula:
+        "Sharpe ≈ mean_t(r_t) / std_t(r_t) × √A",
+      interpretation:
+        "Higher positive values indicate better return per unit of volatility.",
+      note:
+        "Whether r_t is total return or excess return depends on the raw metric key.",
+    };
+  }
+
+  return {
+    definition:
+      "Raw metric emitted by the Qlib experiment/backtest. Its exact meaning is recorder-specific.",
+    formula:
+      "Recorder-specific — inspect the raw metric key or Qlib recorder that produced it.",
+    interpretation:
+      "Use this as an advanced diagnostic unless it is one of the documented headline metrics.",
+    note:
+      "The UI preserves every raw metric from the experiment, so future Qlib metrics can appear here without being dropped.",
+  };
+};
+
+`;
+if (!metricGuideS45.includes(metricGoalP45Anchor)) {
+  console.error("[patch-frontend] FAILED: P45 metric guide logic anchor drifted.");
+  process.exit(1);
+}
+metricGuideS45 = metricGuideS45.replace(
+  metricGoalP45Anchor,
+  metricGuideLogicP45 + metricGoalP45Anchor
+);
+
+const metricMapP45Old = `        goal: goal.text,
+        goalKind: goal.kind,
+      };`;
+const metricMapP45New = `        goal: goal.text,
+        goalKind: goal.kind,
+        guide: metricGuideInfo(key),
+      };`;
+if (!metricGuideS45.includes(metricMapP45Old)) {
+  console.error("[patch-frontend] FAILED: P45 allMetrics mapping anchor drifted.");
+  process.exit(1);
+}
+metricGuideS45 = metricGuideS45.replace(metricMapP45Old, metricMapP45New);
+
+const visibleP45Anchor = `const latestNumericValue = (item) => {`;
+const guideComputedP45 = `const guideMetrics = computed(() => allMetrics.value);
+
+`;
+if (!metricGuideS45.includes(visibleP45Anchor)) {
+  console.error("[patch-frontend] FAILED: P45 guideMetrics anchor drifted.");
+  process.exit(1);
+}
+metricGuideS45 = metricGuideS45.replace(
+  visibleP45Anchor,
+  guideComputedP45 + visibleP45Anchor
+);
+
+const closeP45Anchor = `const close = () => {`;
+const guideMethodsP45 = `const openMetricGuide = (item = null) => {
+  selectedGuideMetric.value = item;
+  showMetricGuide.value = true;
+};
+
+const closeMetricGuide = () => {
+  showMetricGuide.value = false;
+  selectedGuideMetric.value = null;
+};
+
+`;
+if (!metricGuideS45.includes(closeP45Anchor)) {
+  console.error("[patch-frontend] FAILED: P45 guide methods anchor drifted.");
+  process.exit(1);
+}
+metricGuideS45 = metricGuideS45.replace(
+  closeP45Anchor,
+  guideMethodsP45 + closeP45Anchor
+);
+
+const styleP45Anchor = `.metric-help {
+  display: flex;`;
+const styleP45New = `.metric-toolbar-side {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.65em 0.85em;
+}
+
+.metric-help {
+  display: flex;`;
+if (!metricGuideS45.includes(styleP45Anchor)) {
+  console.error("[patch-frontend] FAILED: P45 metric-help style anchor drifted.");
+  process.exit(1);
+}
+metricGuideS45 = metricGuideS45.replace(styleP45Anchor, styleP45New);
+
+const rawStyleP45Old = `.metric-raw-name {
+  min-height: 2.6em;
+  margin: -0.2em 1em 0.9em;
+  padding-top: 0.65em;
+  border-top: 1px solid #edf0f6;
+  color: #7e879b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.64em;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}`;
+const rawStyleP45New = `.metric-card-footer {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6em;
+  margin: -0.2em 1em 0.9em;
+  padding-top: 0.65em;
+  border-top: 1px solid #edf0f6;
+}
+
+.metric-raw-name {
+  flex: 1;
+  min-width: 0;
+  color: #7e879b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.64em;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.metric-info-btn,
+.metric-guide-btn {
+  border: 1px solid #d9deeb;
+  background: var(--bg-white);
+  color: #5e6780;
+  cursor: pointer;
+  transition: 0.16s ease;
+}
+
+.metric-info-btn {
+  width: 1.9em;
+  height: 1.9em;
+  flex: 0 0 1.9em;
+  border-radius: 50%;
+  padding: 0;
+  font-size: 0.78em;
+  font-weight: 800;
+}
+
+.metric-guide-btn {
+  border-radius: 999px;
+  padding: 0.48em 0.8em;
+  font-size: 0.76em;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.metric-info-btn:hover,
+.metric-guide-btn:hover {
+  border-color: #846aff;
+  color: #5a42d6;
+  background: #f6f3ff;
+}
+
+.metric-guide-overlay {
+  width: 100vw;
+  height: 100vh;
+  position: fixed;
+  inset: 0;
+  z-index: 1000000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2em;
+  box-sizing: border-box;
+  background: rgba(33, 38, 52, 0.28);
+  backdrop-filter: blur(5px);
+}
+
+.metric-guide-card {
+  width: min(980px, 94vw);
+  max-height: 86vh;
+  overflow: auto;
+  box-sizing: border-box;
+  border: 1px solid #e1e5ef;
+  border-radius: 20px;
+  padding: 1.35em 1.45em 1.1em;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(39, 45, 67, 0.22);
+}
+
+.metric-guide-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1em;
+  padding-bottom: 1em;
+  border-bottom: 1px solid #edf0f6;
+}
+
+.metric-guide-head h2 {
+  margin: 0.12em 0 0.18em;
+  font-size: 1.45em;
+  color: #252b3b;
+}
+
+.metric-guide-head p {
+  margin: 0;
+  max-width: 760px;
+  color: #6f7890;
+  line-height: 1.5;
+  font-size: 0.9em;
+}
+
+.metric-guide-kicker,
+.metric-guide-list-group {
+  color: #8a72e7;
+  font-size: 0.68em;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.metric-guide-raw {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+
+.metric-guide-close {
+  width: 2.15em;
+  height: 2.15em;
+  flex: 0 0 2.15em;
+  border: 0;
+  border-radius: 50%;
+  background: #f2f4f8;
+  color: #616a80;
+  font-size: 1.15em;
+  cursor: pointer;
+}
+
+.metric-guide-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9em;
+  padding: 1.1em 0;
+}
+
+.metric-guide-list-item {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #e4e8f1;
+  border-radius: 14px;
+  padding: 0.9em 1em;
+  background: #fff;
+  color: #31384a;
+  text-align: left;
+  cursor: pointer;
+}
+
+.metric-guide-list-item:hover {
+  border-color: #9b87ef;
+  background: #fbfaff;
+}
+
+.metric-guide-list-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.7em;
+}
+
+.metric-guide-list-top strong {
+  display: block;
+  margin-top: 0.16em;
+  font-size: 0.96em;
+}
+
+.metric-guide-list-item p {
+  margin: 0.6em 0;
+  color: #606a80;
+  font-size: 0.82em;
+  line-height: 1.48;
+}
+
+.metric-guide-list-item code,
+.metric-formula {
+  display: block;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  border-radius: 9px;
+  padding: 0.55em 0.65em;
+  background: #f6f7fa;
+  color: #414a60;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.76em;
+  line-height: 1.45;
+}
+
+.metric-guide-detail {
+  padding: 1.05em 0 0.25em;
+}
+
+.metric-guide-badges {
+  display: flex;
+  gap: 0.55em;
+  align-items: center;
+  margin-bottom: 0.8em;
+}
+
+.metric-guide-group {
+  border-radius: 999px;
+  padding: 0.32em 0.58em;
+  background: #f2f4f8;
+  color: #687189;
+  font-size: 0.7em;
+  font-weight: 800;
+}
+
+.metric-guide-section {
+  margin: 0.95em 0;
+}
+
+.metric-guide-section h3 {
+  margin: 0 0 0.35em;
+  color: #32394b;
+  font-size: 0.84em;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.metric-guide-section p {
+  margin: 0;
+  color: #5b657b;
+  line-height: 1.62;
+  font-size: 0.92em;
+}
+
+.metric-guide-note {
+  border-left: 3px solid #b7a8f3;
+  padding-left: 0.9em;
+}
+
+.metric-guide-back {
+  margin-top: 0.4em;
+  border: 0;
+  border-radius: 999px;
+  padding: 0.55em 0.9em;
+  background: #f2efff;
+  color: #5a42d6;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.metric-guide-foot {
+  margin-top: 0.8em;
+  padding-top: 0.8em;
+  border-top: 1px solid #edf0f6;
+  color: #858da0;
+  font-size: 0.72em;
+  line-height: 1.55;
+}`;
+if (!metricGuideS45.includes(rawStyleP45Old)) {
+  console.error("[patch-frontend] FAILED: P45 raw-name style anchor drifted.");
+  process.exit(1);
+}
+metricGuideS45 = metricGuideS45.replace(rawStyleP45Old, rawStyleP45New);
+
+const mobileP45Old = `  .metric-help {
+    justify-content: flex-start;
+  }
+
+  .chart-box {`;
+const mobileP45New = `  .metric-toolbar-side,
+  .metric-help {
+    justify-content: flex-start;
+  }
+
+  .metric-guide-list {
+    grid-template-columns: 1fr;
+  }
+
+  .metric-guide-overlay {
+    padding: 0.7em;
+  }
+
+  .metric-guide-card {
+    width: 100%;
+    max-height: 92vh;
+    padding: 1em;
+  }
+
+  .chart-box {`;
+if (!metricGuideS45.includes(mobileP45Old)) {
+  console.error("[patch-frontend] FAILED: P45 mobile style anchor drifted.");
+  process.exit(1);
+}
+metricGuideS45 = metricGuideS45.replace(mobileP45Old, mobileP45New);
+
+fs.writeFileSync(metricGuideP45, metricGuideS45);
+console.log("[patch-frontend] P45 metric definitions/formulas guide applied to chartBox.vue");
+
