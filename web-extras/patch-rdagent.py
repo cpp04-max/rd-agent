@@ -1400,13 +1400,22 @@ _QUANT_DIRECT_NEW = '''    def _check_exit_conditions_on_step(
         loop_id: int | None = None,
         step_id: int | None = None,
     ) -> None:
-        # Finish feedback + record for the failed experiment so the UI/checkpoint is
-        # complete, but never turn an infrastructure failure into the next research
-        # hypothesis. A retry should resume from the coding checkpoint of this loop.
-        if step_id == 0 and getattr(self, "_execution_failure_pending", None):
+        # Stop only AFTER the failed loop's record step has completed and its durable
+        # checkpoint has been written. LoopBase calls this hook *after* each step.
+        #
+        # P46 incorrectly checked step_id == 0, which meant the next loop's
+        # direct_exp_gen was allowed to run first and was then terminated immediately.
+        # That produced an empty-looking red Loop 01 in the UI. The record-step guard
+        # below prevents the next hypothesis from being started at all.
+        _record_step_id = self.steps.index("record") if "record" in self.steps else len(self.steps) - 1
+        if (
+            step_id == _record_step_id
+            and getattr(self, "_execution_failure_pending", None)
+        ):
             logger.error(
-                "Execution failure recorded; stopping before the next hypothesis. "
-                "Retry this experiment after fixing the runtime/resource issue."
+                "Execution failure recorded; stopping after the failed loop record "
+                "checkpoint and before any next hypothesis. Retry this experiment "
+                "from its coding checkpoint after fixing the runtime/resource issue."
             )
             raise self.LoopTerminationError("Execution failure requires retry/repair")
         return super()._check_exit_conditions_on_step(loop_id=loop_id, step_id=step_id)
