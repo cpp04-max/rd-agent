@@ -1197,4 +1197,96 @@ patch(
     "P41 rebuild completed live RESULT from persisted trace",
 )
 
+
+# ---------------------------------------------------------------- P42 durable continuation / branching
+# 1) Put LoopBase.__session__ under each trace on /data so checkpoints survive deploys.
+# 2) Extend fin_quant main with "additional loops", instruction override, and a fresh
+#    timer when resuming.
+# 3) Add /resume/options and /resume routes. Resume is non-destructive: the source
+#    trace is copied, then the copy is checked out/truncated to the chosen checkpoint.
+_DURABLE_SESSION_OLD = '''        from rdagent.log.conf import LOG_SETTINGS
+
+        LOG_SETTINGS.set_ui_server_port(self.ui_server_port)
+'''
+_DURABLE_SESSION_NEW = '''        from rdagent.log.conf import LOG_SETTINGS
+
+        # Keep workflow session snapshots beside this trace's durable FileStorage.
+        # Without this, LoopBase.__session__ uses the process-start log directory
+        # under /app and disappears on redeploy.
+        LOG_SETTINGS.trace_path = self.log_trace_path
+        LOG_SETTINGS.set_ui_server_port(self.ui_server_port)
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _DURABLE_SESSION_OLD,
+    _DURABLE_SESSION_NEW,
+    "P42 persist __session__ under each trace",
+)
+
+_QUANT_SIG_OLD = '''    checkout: bool = True,
+    base_features_path: str | None = None,
+    **kwargs,
+):
+'''
+_QUANT_SIG_NEW = '''    checkout: bool | str = True,
+    base_features_path: str | None = None,
+    additional_loops: int | None = None,
+    resume_instruction: str | None = None,
+    reset_timer_on_resume: bool = True,
+    **kwargs,
+):
+'''
+patch(
+    "rdagent/app/qlib_rd_loop/quant.py",
+    _QUANT_SIG_OLD,
+    _QUANT_SIG_NEW,
+    "P42 fin_quant resume arguments",
+)
+
+_QUANT_LOAD_OLD = '''    if path is None:
+        quant_loop = QuantRDLoop(QUANT_PROP_SETTING)
+    else:
+        quant_loop = QuantRDLoop.load(path, checkout=checkout)
+    quant_loop._init_base_features(base_features_path)
+'''
+_QUANT_LOAD_NEW = '''    if path is None:
+        quant_loop = QuantRDLoop(QUANT_PROP_SETTING)
+    else:
+        # A continuation gets a new budget rather than inheriting an expired timer.
+        quant_loop = QuantRDLoop.load(
+            path,
+            checkout=checkout,
+            replace_timer=not reset_timer_on_resume,
+        )
+
+    if resume_instruction:
+        quant_loop.plan["user_instruction"] = str(resume_instruction)
+
+    if additional_loops is not None:
+        # LoopBase.run() restarts kickoff from loop index 0, and its loop_n counter
+        # is consumed even by already-completed loop indices. Convert "N additional"
+        # into the total kickoff span needed to reach N genuinely new loops.
+        _existing_loop_span = max(quant_loop.step_idx.keys(), default=-1) + 1
+        loop_n = _existing_loop_span + int(additional_loops)
+        logger.info(
+            f"Resume requested: existing loop span={_existing_loop_span}, "
+            f"additional_loops={additional_loops}, effective loop_n={loop_n}"
+        )
+
+    quant_loop._init_base_features(base_features_path)
+'''
+patch(
+    "rdagent/app/qlib_rd_loop/quant.py",
+    _QUANT_LOAD_OLD,
+    _QUANT_LOAD_NEW,
+    "P42 fresh timer + additional-loop semantics + instruction override",
+)
+
+patch(
+    "rdagent/log/server/app.py",
+    '@app.route("/upload", methods=["POST"])',
+    snippet("resume_routes.py") + '\n\n\n@app.route("/upload", methods=["POST"])',
+    "P42 resume/branch API routes",
+)
+
 print("All rdagent patches applied.", flush=True)
