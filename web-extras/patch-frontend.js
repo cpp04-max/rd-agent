@@ -622,3 +622,449 @@ s8 = s8.replace(styleAnchor, styleReplacement);
 fs.writeFileSync(p8, s8);
 console.log("[patch-frontend] P37 null-safe RESULT rendering applied to ResultPage.vue");
 
+// ------------------------- P42: Continue / Branch experiment UI -------------------------
+const apiPathP42 = "/src/web/src/utils/api.js";
+let apiP42 = fs.readFileSync(apiPathP42, "utf8");
+const apiP42Anchor = `export function getStdoutDownloadUrl(traceId) {
+    const query = new URLSearchParams({ id: traceId });
+    return url + "stdout?" + query.toString();
+}
+`;
+const apiP42New = apiP42Anchor + `
+export function getResumeOptions(traceId) {
+    const query = new URLSearchParams({ id: traceId });
+    return request({
+        url: url + "resume/options?" + query.toString(),
+        method: "get"
+    });
+}
+
+export function resumeTrace(data) {
+    return request({
+        url: url + "resume",
+        method: "post",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        data: data
+    });
+}
+`;
+if (!apiP42.includes(apiP42Anchor)) {
+  console.error("[patch-frontend] FAILED: P42 api.js anchor drifted.");
+  process.exit(1);
+}
+apiP42 = apiP42.replace(apiP42Anchor, apiP42New);
+fs.writeFileSync(apiPathP42, apiP42);
+console.log("[patch-frontend] P42 resume API helpers applied to api.js");
+
+const resultP42 = "/src/web/src/views/ResultPage.vue";
+let resultS42 = fs.readFileSync(resultP42, "utf8");
+
+const importP42Old = 'import { getStdoutDownloadUrl } from "../utils/api";';
+const importP42New =
+  'import { getStdoutDownloadUrl, getResumeOptions, resumeTrace } from "../utils/api";';
+if (!resultS42.includes(importP42Old)) {
+  console.error("[patch-frontend] FAILED: P42 ResultPage import anchor drifted.");
+  process.exit(1);
+}
+resultS42 = resultS42.replace(importP42Old, importP42New);
+
+const toolbarP42Old = `      <div class="download-btn-item" @click="downloadAllLoops">
+        <span class="download-icon"></span>
+        <span>All loop files</span>
+      </div>
+    </div>
+`;
+const toolbarP42New = `      <div class="download-btn-item" @click="downloadAllLoops">
+        <span class="download-icon"></span>
+        <span>All loop files</span>
+      </div>
+      <button
+        class="resume-experiment-btn"
+        type="button"
+        @click="openResumeDialog"
+        :disabled="resumeLoading || resumeSubmitting"
+      >
+        {{ resumeLoading ? "CHECKING…" : "CONTINUE / BRANCH" }}
+      </button>
+    </div>
+`;
+if (!resultS42.includes(toolbarP42Old)) {
+  console.error("[patch-frontend] FAILED: P42 ResultPage toolbar anchor drifted.");
+  process.exit(1);
+}
+resultS42 = resultS42.replace(toolbarP42Old, toolbarP42New);
+
+const bgP42Anchor = '    <div class="bg-content">';
+const dialogP42 = `    <div class="resume-overlay" v-if="resumeDialogVisible">
+      <div class="resume-card">
+        <div class="resume-card-head">
+          <div>
+            <h2>Continue or branch this experiment</h2>
+            <p>
+              The source trace is never overwritten. A new trace is created from the
+              selected checkpoint.
+            </p>
+          </div>
+          <button class="resume-close" type="button" @click="closeResumeDialog">×</button>
+        </div>
+
+        <div v-if="resumeError" class="resume-error">{{ resumeError }}</div>
+
+        <template v-if="resumeInfo && resumeInfo.resumable">
+          <label class="resume-field">
+            <span>Resume from</span>
+            <select v-model="resumeCheckpoint">
+              <option value="latest">
+                Latest state · Loop {{ resumeInfo.latest?.loop_number || "?" }} ·
+                after {{ resumeInfo.latest?.step_name || "checkpoint" }}
+              </option>
+              <option
+                v-for="checkpoint in resumeInfo.checkpoints"
+                :key="checkpoint.key"
+                :value="checkpoint.key"
+              >
+                {{ checkpoint.label }}
+              </option>
+            </select>
+          </label>
+
+          <div class="resume-grid">
+            <label class="resume-field">
+              <span>Additional loops</span>
+              <input
+                type="number"
+                min="1"
+                max="100"
+                v-model.number="resumeAdditionalLoops"
+              />
+            </label>
+            <label class="resume-field">
+              <span>New time budget (hours)</span>
+              <input
+                type="number"
+                min="0.25"
+                max="72"
+                step="0.25"
+                v-model.number="resumeHours"
+              />
+            </label>
+          </div>
+
+          <label class="resume-field">
+            <span>New research instruction (optional)</span>
+            <textarea
+              rows="5"
+              v-model="resumeInstruction"
+              placeholder="Example: Keep the current SOTA architecture. Focus the next experiments on recency bias, loss design and training optimization."
+            ></textarea>
+          </label>
+
+          <div class="resume-hint">
+            <strong>{{ resumeCheckpoint === "latest" ? "Continue" : "Branch" }}:</strong>
+            {{
+              resumeCheckpoint === "latest"
+                ? "preserves the latest research state, including failed loops as negative evidence."
+                : "starts a new research branch from the selected historical checkpoint."
+            }}
+          </div>
+
+          <div class="resume-actions">
+            <button type="button" class="resume-secondary" @click="closeResumeDialog">
+              Cancel
+            </button>
+            <button
+              type="button"
+              class="resume-primary"
+              @click="startResume"
+              :disabled="resumeSubmitting"
+            >
+              {{ resumeSubmitting ? "STARTING…" : (resumeCheckpoint === "latest" ? "CONTINUE" : "CREATE BRANCH") }}
+            </button>
+          </div>
+        </template>
+
+        <div
+          v-else-if="resumeInfo && !resumeInfo.resumable"
+          class="resume-unavailable"
+        >
+          {{ resumeInfo.message || "This trace does not contain durable session checkpoints." }}
+          <div class="resume-small">
+            New runs created after the resume feature is deployed will be resumable.
+          </div>
+        </div>
+      </div>
+    </div>
+
+`;
+if (!resultS42.includes(bgP42Anchor)) {
+  console.error("[patch-frontend] FAILED: P42 ResultPage bg-content anchor drifted.");
+  process.exit(1);
+}
+resultS42 = resultS42.replace(bgP42Anchor, dialogP42 + bgP42Anchor);
+
+const stateP42Anchor = "const metricData = ref(null);";
+const stateP42New = stateP42Anchor + `
+const resumeDialogVisible = ref(false);
+const resumeLoading = ref(false);
+const resumeSubmitting = ref(false);
+const resumeInfo = ref(null);
+const resumeError = ref("");
+const resumeCheckpoint = ref("latest");
+const resumeAdditionalLoops = ref(5);
+const resumeHours = ref(6);
+const resumeInstruction = ref("");
+`;
+if (!resultS42.includes(stateP42Anchor)) {
+  console.error("[patch-frontend] FAILED: P42 ResultPage state anchor drifted.");
+  process.exit(1);
+}
+resultS42 = resultS42.replace(stateP42Anchor, stateP42New);
+
+const traceFnP42Anchor = "const getTraceId = () => {";
+const methodsP42 = `const closeResumeDialog = () => {
+  if (resumeSubmitting.value) return;
+  resumeDialogVisible.value = false;
+};
+
+const openResumeDialog = async () => {
+  const traceId = getTraceId();
+  if (!traceId) {
+    ElMessage.warning("Trace ID is not available.");
+    return;
+  }
+
+  resumeLoading.value = true;
+  resumeError.value = "";
+  resumeInfo.value = null;
+  try {
+    const info = await getResumeOptions(traceId);
+    resumeInfo.value = info || {};
+    resumeCheckpoint.value = "latest";
+    resumeDialogVisible.value = true;
+  } catch (error) {
+    const message =
+      error?.response?.data?.error ||
+      error?.message ||
+      "Failed to load resume checkpoints.";
+    resumeError.value = message;
+    ElMessage.error(message);
+  } finally {
+    resumeLoading.value = false;
+  }
+};
+
+const startResume = async () => {
+  const traceId = getTraceId();
+  const loops = Number(resumeAdditionalLoops.value);
+  const hours = Number(resumeHours.value);
+  if (!Number.isInteger(loops) || loops < 1 || loops > 100) {
+    resumeError.value = "Additional loops must be an integer between 1 and 100.";
+    return;
+  }
+  if (!Number.isFinite(hours) || hours <= 0 || hours > 72) {
+    resumeError.value = "Time budget must be greater than 0 and at most 72 hours.";
+    return;
+  }
+
+  resumeSubmitting.value = true;
+  resumeError.value = "";
+  try {
+    const result = await resumeTrace({
+      source_id: traceId,
+      checkpoint: resumeCheckpoint.value,
+      additional_loops: loops,
+      all_duration: hours,
+      instruction: resumeInstruction.value,
+    });
+    const newTraceId = result?.id;
+    if (!newTraceId) {
+      throw new Error("Resume started but no new trace ID was returned.");
+    }
+    ElMessage.success(
+      resumeCheckpoint.value === "latest"
+        ? "Continuation started."
+        : "Research branch started."
+    );
+    resumeDialogVisible.value = false;
+    window.location.href =
+      window.location.origin +
+      "/#/Playground?trace=" +
+      encodeURIComponent(newTraceId);
+  } catch (error) {
+    resumeError.value =
+      error?.response?.data?.error ||
+      error?.message ||
+      "Failed to start continuation.";
+  } finally {
+    resumeSubmitting.value = false;
+  }
+};
+
+`;
+if (!resultS42.includes(traceFnP42Anchor)) {
+  console.error("[patch-frontend] FAILED: P42 ResultPage getTraceId anchor drifted.");
+  process.exit(1);
+}
+resultS42 = resultS42.replace(traceFnP42Anchor, methodsP42 + traceFnP42Anchor);
+
+const styleEndP42 = "</style>";
+const styleP42 = `
+.resume-experiment-btn {
+  border: 1px solid #7657ff;
+  border-radius: 10px;
+  background: #ffffff;
+  color: #5a42d6;
+  padding: 0.55em 1em;
+  font-size: 0.82em;
+  font-weight: 800;
+  cursor: pointer;
+}
+.resume-experiment-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.resume-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(20, 24, 40, 0.42);
+}
+.resume-card {
+  width: min(680px, 94vw);
+  max-height: 88vh;
+  overflow: auto;
+  box-sizing: border-box;
+  padding: 24px;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 24px 80px rgba(35, 42, 78, 0.24);
+  color: #252938;
+}
+.resume-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  align-items: flex-start;
+  margin-bottom: 18px;
+}
+.resume-card-head h2 {
+  margin: 0 0 4px;
+  font-size: 1.2em;
+}
+.resume-card-head p,
+.resume-small {
+  margin: 0;
+  color: #727a92;
+  font-size: 0.86em;
+  line-height: 1.55;
+}
+.resume-close {
+  border: 0;
+  background: transparent;
+  font-size: 1.6em;
+  cursor: pointer;
+}
+.resume-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 14px 0;
+}
+.resume-field > span {
+  font-size: 0.86em;
+  font-weight: 800;
+}
+.resume-field select,
+.resume-field input,
+.resume-field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1px solid #ccd4e8;
+  border-radius: 10px;
+  background: #fff;
+  padding: 10px 12px;
+  color: #2b3040;
+  font: inherit;
+}
+.resume-field textarea {
+  resize: vertical;
+}
+.resume-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.resume-hint,
+.resume-unavailable,
+.resume-error {
+  margin: 14px 0;
+  padding: 11px 13px;
+  border-radius: 10px;
+  font-size: 0.86em;
+  line-height: 1.5;
+}
+.resume-hint {
+  background: #f5f7ff;
+  color: #525d78;
+}
+.resume-unavailable {
+  background: #f7f8fb;
+  color: #50586e;
+}
+.resume-error {
+  background: #fff1f1;
+  color: #a73535;
+}
+.resume-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+.resume-primary,
+.resume-secondary {
+  border-radius: 10px;
+  padding: 9px 16px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.resume-primary {
+  border: 0;
+  background: #6848ff;
+  color: #fff;
+}
+.resume-primary:disabled {
+  opacity: 0.55;
+}
+.resume-secondary {
+  border: 1px solid #ccd4e8;
+  background: #fff;
+  color: #4f5870;
+}
+@media (max-width: 680px) {
+  .resume-grid {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+}
+
+`;
+const lastStyle = resultS42.lastIndexOf(styleEndP42);
+if (lastStyle === -1) {
+  console.error("[patch-frontend] FAILED: P42 ResultPage style end missing.");
+  process.exit(1);
+}
+resultS42 =
+  resultS42.slice(0, lastStyle) +
+  styleP42 +
+  resultS42.slice(lastStyle);
+
+fs.writeFileSync(resultP42, resultS42);
+console.log("[patch-frontend] P42 Continue / Branch UI applied to ResultPage.vue");
+

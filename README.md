@@ -158,3 +158,23 @@ docker run --rm -p 19899:19899 --env-file .env rdagent-q
 
 > A run that stops immediately with **"config: null"** means the LLM backend is not configured —
 > set the DashScope secrets above.
+
+
+## Continuing and branching experiments
+
+Runs created after the resume feature is deployed persist workflow checkpoints under each trace:
+
+```
+/data/traces/Finance Whole Pipeline/<trace>/__session__/<loop>/<step>_<name>
+```
+
+Open a completed run's **RESULT** tab and choose **CONTINUE / BRANCH**.
+
+- **Latest state** creates a non-destructive continuation from the most recent checkpoint.
+- Choosing a historical checkpoint creates a branch from that loop/step.
+- **Additional loops** means genuinely new loops. For example, an 8-loop run plus 5 additional loops runs 5 more loops; the backend compensates for RD-Agent's upstream total-kickoff semantics.
+- **New time budget** starts a fresh timer; an expired timer from the source run is not reused.
+- **New research instruction** is optional and overrides the carried-forward instruction while preserving the checkpoint's research history, SOTA state, factors, model state, and negative evidence.
+- The source trace is never modified. The server copies it to a new trace and truncates only the copy to the selected checkpoint before continuing.
+
+Older traces created before this feature may not have durable `__session__` checkpoints and therefore cannot be safely resumed after a redeploy.
