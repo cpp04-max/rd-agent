@@ -1289,4 +1289,211 @@ patch(
     "P42 resume/branch API routes",
 )
 
+
+# ---------------------------------------------------------------- P46
+# Treat qlib/runtime failures as execution failures rather than failed research.
+# The previous behavior converted a killed qrun into FactorEmptyError/ModelEmptyError,
+# recorded decision=False with an empty reason, then immediately generated another
+# hypothesis. That caused every later loop to inherit the same broken execution state.
+#
+# P46 does four things:
+#   1) preserve qrun exit code (including SIGKILL/OOM-style 137) in the error text;
+#   2) populate a useful feedback reason instead of leaving reason="";
+#   3) stop BEFORE the next hypothesis after an execution failure, while keeping the
+#      failed loop's feedback/record checkpoint durable;
+#   4) make bandit metric extraction null-safe for older failed traces.
+
+_WORKSPACE_QRUN_OLD = '''        execute_qlib_log = qtde.check_output(
+            local_path=str(self.workspace_path),
+            entry=f"qrun {qlib_config_name}",
+            env=run_env,
+        )
+        logger.log_object(execute_qlib_log, tag="Qlib_execute_log")
+
+        execute_log = qtde.check_output(
+'''
+_WORKSPACE_QRUN_NEW = '''        _qlib_run = qtde.run(
+            local_path=str(self.workspace_path),
+            entry=f"qrun {qlib_config_name}",
+            env=run_env,
+        )
+        execute_qlib_log = _qlib_run.stdout
+        if _qlib_run.exit_code != 0:
+            _status = (
+                f"[RD-Agent execution status] qrun_exit_code={_qlib_run.exit_code} "
+                f"running_time={_qlib_run.running_time:.1f}s"
+            )
+            if _qlib_run.exit_code in (137, -9):
+                _status += (
+                    " | process was killed (SIGKILL/137); on Fly this commonly "
+                    "indicates memory pressure/OOM"
+                )
+            elif _qlib_run.exit_code == 124:
+                _status += " | qrun timed out"
+            execute_qlib_log = f"{execute_qlib_log}\\n{_status}"
+            logger.error(_status)
+            logger.log_object(execute_qlib_log, tag="Qlib_execute_log")
+            return None, execute_qlib_log
+
+        logger.log_object(execute_qlib_log, tag="Qlib_execute_log")
+
+        execute_log = qtde.check_output(
+'''
+patch(
+    "rdagent/scenarios/qlib/experiment/workspace.py",
+    _WORKSPACE_QRUN_OLD,
+    _WORKSPACE_QRUN_NEW,
+    "P46 preserve qrun exit status and fail before result parsing",
+)
+
+_QUANT_CLASS_OLD = '''class QuantRDLoop(RDLoop):
+'''
+_QUANT_CLASS_NEW = '''def _is_execution_failure(exc: Exception | str | None) -> bool:
+    """Return True for runtime/infrastructure failures, not research rejection."""
+    text = str(exc or "")
+    lower = text.lower()
+    return (
+        "failed to run this experiment" in lower
+        or ("failed to run " in lower and " model, because " in lower)
+        or "qrun_exit_code=" in lower
+        or "no result file found" in lower
+        or "\\nkilled" in lower
+        or "process was killed" in lower
+        or "running time exceeds" in lower
+        or "qrun timed out" in lower
+    )
+
+
+def _execution_failure_reason(exc: Exception | str | None) -> str:
+    text = str(exc or "")
+    lower = text.lower()
+    if "qrun_exit_code=137" in lower or "qrun_exit_code=-9" in lower or "\\nkilled" in lower:
+        return (
+            "Execution failed: the Qlib process was killed before producing a complete "
+            "backtest result. This is an infrastructure/resource failure (commonly "
+            "memory pressure/OOM), not evidence that the research hypothesis is bad."
+        )
+    if "qrun_exit_code=124" in lower or "timed out" in lower or "running time exceeds" in lower:
+        return (
+            "Execution failed: the Qlib run timed out before producing a complete "
+            "backtest result. Retry/repair the execution before evaluating the hypothesis."
+        )
+    return (
+        "Execution failed: Qlib did not produce a valid backtest result. "
+        "Retry/repair the execution before generating a new research hypothesis."
+    )
+
+
+class QuantRDLoop(RDLoop):
+'''
+patch(
+    "rdagent/app/qlib_rd_loop/quant.py",
+    _QUANT_CLASS_OLD,
+    _QUANT_CLASS_NEW,
+    "P46 classify quant execution failures",
+)
+
+_QUANT_DIRECT_OLD = '''    async def direct_exp_gen(self, prev_out: dict[str, Any]):
+'''
+_QUANT_DIRECT_NEW = '''    def _check_exit_conditions_on_step(
+        self,
+        loop_id: int | None = None,
+        step_id: int | None = None,
+    ) -> None:
+        # Finish feedback + record for the failed experiment so the UI/checkpoint is
+        # complete, but never turn an infrastructure failure into the next research
+        # hypothesis. A retry should resume from the coding checkpoint of this loop.
+        if step_id == 0 and getattr(self, "_execution_failure_pending", None):
+            logger.error(
+                "Execution failure recorded; stopping before the next hypothesis. "
+                "Retry this experiment after fixing the runtime/resource issue."
+            )
+            raise self.LoopTerminationError("Execution failure requires retry/repair")
+        return super()._check_exit_conditions_on_step(loop_id=loop_id, step_id=step_id)
+
+    async def direct_exp_gen(self, prev_out: dict[str, Any]):
+'''
+patch(
+    "rdagent/app/qlib_rd_loop/quant.py",
+    _QUANT_DIRECT_OLD,
+    _QUANT_DIRECT_NEW,
+    "P46 stop hypothesis cascade after execution failure",
+)
+
+_QUANT_FEEDBACK_OLD = '''        if e is not None:
+            feedback = HypothesisFeedback(
+                observations=str(e),
+                hypothesis_evaluation="",
+                new_hypothesis="",
+                reason="",
+                decision=False,
+            )
+        else:
+'''
+_QUANT_FEEDBACK_NEW = '''        if e is not None:
+            if _is_execution_failure(e):
+                _reason = _execution_failure_reason(e)
+                self._execution_failure_pending = _reason
+                feedback = HypothesisFeedback(
+                    observations=str(e),
+                    hypothesis_evaluation=(
+                        "The experiment was not scientifically evaluated because the "
+                        "execution/backtest did not complete."
+                    ),
+                    new_hypothesis="",
+                    reason=_reason,
+                    decision=False,
+                    exception=e,
+                )
+            else:
+                # A normal implementation/research failure should still explain why it
+                # failed instead of leaving ResultPage with an empty reason.
+                feedback = HypothesisFeedback(
+                    observations=str(e),
+                    hypothesis_evaluation="",
+                    new_hypothesis="",
+                    reason=str(e),
+                    decision=False,
+                    exception=e,
+                )
+        else:
+'''
+patch(
+    "rdagent/app/qlib_rd_loop/quant.py",
+    _QUANT_FEEDBACK_OLD,
+    _QUANT_FEEDBACK_NEW,
+    "P46 keep actual exception reason in quant feedback",
+)
+
+_BANDIT_NULL_OLD = '''    try:
+        result = experiment.result
+        ic = result.get("IC", 0.0)
+'''
+_BANDIT_NULL_NEW = '''    try:
+        result = getattr(experiment, "result", None)
+        if result is None:
+            # Failed/incomplete experiments have no scientific metric. Returning a
+            # neutral vector is intentional; P46 stops new-hypothesis generation
+            # after a fresh execution failure, while this also keeps old traces safe.
+            return Metrics()
+        ic = result.get("IC", 0.0)
+'''
+patch(
+    "rdagent/scenarios/qlib/proposal/bandit.py",
+    _BANDIT_NULL_OLD,
+    _BANDIT_NULL_NEW,
+    "P46 null-safe bandit metric extraction",
+)
+
+patch(
+    "rdagent/scenarios/qlib/proposal/bandit.py",
+    '        arr = result.get("1day.excess_return_with_cost.annualized_return ", 0.0)',
+    '        arr = result.get(\n'
+    '            "1day.excess_return_with_cost.annualized_return",\n'
+    '            result.get("1day.excess_return_with_cost.annualized_return ", 0.0),\n'
+    '        )',
+    "P46 accept canonical with-cost annualized-return key",
+)
+
+
 print("All rdagent patches applied.", flush=True)
