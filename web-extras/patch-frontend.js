@@ -3663,3 +3663,7 @@ console.log("[patch-frontend] P55 coder/no-output execution-failure UI applied")
 
 // P56 history management UI
 require("./patch-history-p56.js");
+
+
+// P57 reactive Result -> continuation route handoff
+require("./patch-route-p57.js");
