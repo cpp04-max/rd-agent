@@ -299,10 +299,15 @@ def resume_trace():
         _shutil.rmtree(dest_dir, ignore_errors=True)
         return jsonify({"error": "Copied checkpoint is missing"}), 500
 
+    resume_start_loop_number = int(selected["loop_number"]) + (
+        1 if selected["step_name"] == "record" else 0
+    )
+
     meta = {
         "source_id": source_id,
         "mode": resume_mode,
         "checkpoint": selected,
+        "resume_start_loop_number": resume_start_loop_number,
         "additional_loops": additional_loops,
         "all_duration_hours": duration_hours,
         "instruction_override": instruction or None,
@@ -341,6 +346,11 @@ def resume_trace():
         additional_loops,
         duration_hours,
     )
+    app.logger.warning(
+        "Continuation active start: UI Loop %d (selected checkpoint %s)",
+        resume_start_loop_number,
+        selected["key"],
+    )
 
     return jsonify(
         {
@@ -348,6 +358,7 @@ def resume_trace():
             "source_id": source_id,
             "mode": resume_mode,
             "checkpoint": selected,
+            "resume_start_loop_number": resume_start_loop_number,
             "additional_loops": additional_loops,
             "all_duration": duration_hours,
         }
