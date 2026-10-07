@@ -1851,4 +1851,100 @@ patch(
 )
 
 
+
+# ---------------------------------------------------------------- P52 fast history listing
+# P51 made history authoritative but sorted each trace by recursively materializing and
+# stat'ing every *.pkl. That turns a simple "open history" click into O(total trace
+# files) filesystem work. Use a cheap existence probe plus the sibling stdout log /
+# trace directory mtimes for activity ordering.
+_HISTORY_LIST_P51_OLD = '''def _collect_existing_trace_ids(trace_root: Path) -> list[str]:
+    """Return durable trace ids in oldest -> newest activity order."""
+
+    if not trace_root.exists():
+        return []
+
+    trace_records = []
+    for trace_dir in trace_root.glob("*/*"):
+        if not trace_dir.is_dir():
+            continue
+        if "uploads" in trace_dir.relative_to(trace_root).parts:
+            continue
+
+        pickle_files = list(trace_dir.rglob("*.pkl"))
+        if not pickle_files:
+            continue
+
+        try:
+            latest_mtime = max(file.stat().st_mtime for file in pickle_files)
+        except OSError:
+            latest_mtime = trace_dir.stat().st_mtime
+
+        trace_records.append(
+            (latest_mtime, trace_dir.relative_to(trace_root).as_posix())
+        )
+
+    # Frontend selects the last entry as the default, so return oldest -> newest.
+    trace_records.sort(key=lambda item: (item[0], item[1]))
+    return [trace_id for _, trace_id in trace_records]
+'''
+_HISTORY_LIST_P52_NEW = '''def _collect_existing_trace_ids(trace_root: Path) -> list[str]:
+    """Return durable trace ids in oldest -> newest activity order, cheaply."""
+
+    if not trace_root.exists():
+        return []
+
+    trace_records = []
+    for trace_dir in trace_root.glob("*/*"):
+        if not trace_dir.is_dir():
+            continue
+        if "uploads" in trace_dir.relative_to(trace_root).parts:
+            continue
+
+        # Existence only: stop at the first persisted event instead of recursively
+        # collecting/stat'ing every pickle in every experiment.
+        try:
+            if next(trace_dir.rglob("*.pkl"), None) is None:
+                continue
+        except OSError:
+            continue
+
+        activity_mtime = 0.0
+        try:
+            activity_mtime = trace_dir.stat().st_mtime
+        except OSError:
+            pass
+
+        # Each run has a sibling stdout log (<trace-name>.log). Its mtime tracks
+        # active work without walking the trace tree and is the best cheap ordering
+        # signal for both live and completed experiments.
+        stdout_path = trace_dir.parent / f"{trace_dir.name}.log"
+        if stdout_path.exists():
+            try:
+                activity_mtime = max(activity_mtime, stdout_path.stat().st_mtime)
+            except OSError:
+                pass
+
+        # Durable session directory is another cheap signal for resume-enabled runs.
+        session_dir = trace_dir / "__session__"
+        if session_dir.exists():
+            try:
+                activity_mtime = max(activity_mtime, session_dir.stat().st_mtime)
+            except OSError:
+                pass
+
+        trace_records.append(
+            (activity_mtime, trace_dir.relative_to(trace_root).as_posix())
+        )
+
+    trace_records.sort(key=lambda item: (item[0], item[1]))
+    return [trace_id for _, trace_id in trace_records]
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _HISTORY_LIST_P51_OLD,
+    _HISTORY_LIST_P52_NEW,
+    "P52 avoid full recursive pickle scan when listing history",
+)
+
+
 print("All rdagent patches applied.", flush=True)
