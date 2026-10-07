@@ -149,6 +149,136 @@ def _resume_execution_failure_retry_step(checkpoint_path: Path):
     return retry_step or "coding"
 
 
+def _history_experiment_records():
+    """Return Finance Whole Pipeline experiments newest-first with activity timestamps."""
+    scenario_dir = log_folder_path / "Finance Whole Pipeline"
+    if not scenario_dir.exists():
+        return []
+
+    records = []
+    for trace_dir in scenario_dir.iterdir():
+        if not trace_dir.is_dir():
+            continue
+        if trace_dir.name == "uploads":
+            continue
+
+        try:
+            if next(trace_dir.rglob("*.pkl"), None) is None:
+                continue
+        except OSError:
+            continue
+
+        activity_mtime = 0.0
+        try:
+            activity_mtime = trace_dir.stat().st_mtime
+        except OSError:
+            pass
+
+        stdout_path = trace_dir.parent / f"{trace_dir.name}.log"
+        for activity_path in (stdout_path, trace_dir / "__session__", trace_dir / "_resume_meta.json"):
+            if not activity_path.exists():
+                continue
+            try:
+                activity_mtime = max(activity_mtime, activity_path.stat().st_mtime)
+            except OSError:
+                pass
+
+        trace_id = trace_dir.relative_to(log_folder_path).as_posix()
+        task = rdagent_processes.get(str(trace_dir))
+        active = bool(task is not None and task.is_alive())
+        updated_at = (
+            datetime.fromtimestamp(activity_mtime, tz=timezone.utc).isoformat()
+            if activity_mtime > 0
+            else None
+        )
+        records.append(
+            {
+                "id": trace_id,
+                "scenario": "Finance Whole Pipeline",
+                "name": trace_dir.name,
+                "timestamp": updated_at,
+                "updated_at": updated_at,
+                "timestamp_ms": int(activity_mtime * 1000) if activity_mtime > 0 else 0,
+                "active": active,
+            }
+        )
+
+    records.sort(
+        key=lambda item: (item.get("timestamp_ms", 0), item.get("id", "")),
+        reverse=True,
+    )
+    return records
+
+
+@app.route("/history/experiments", methods=["GET"])
+def history_experiments():
+    """Structured history metadata for the Previous Experiments UI."""
+    return jsonify(_history_experiment_records()), 200
+
+
+@app.route("/history/experiment", methods=["DELETE"])
+def delete_history_experiment():
+    """Permanently delete one completed experiment's durable trace and stdout log."""
+    import shutil as _shutil
+
+    payload = request.get_json(silent=True) or {}
+    trace_id = str(payload.get("id") or request.args.get("id") or "").strip()
+    trace_dir = _resume_trace_dir(trace_id)
+    if trace_dir is None:
+        return jsonify({"error": "Invalid Finance Whole Pipeline trace ID"}), 400
+    if not trace_dir.exists():
+        return jsonify({"error": "Experiment not found"}), 404
+
+    task = rdagent_processes.get(str(trace_dir))
+    if task is not None and task.is_alive():
+        return jsonify(
+            {
+                "error": (
+                    "This experiment is still running. Stop or wait for it to finish "
+                    "before deleting it."
+                )
+            }
+        ), 409
+
+    stdout_path = trace_dir.parent / f"{trace_dir.name}.log"
+    removed = []
+    errors = []
+
+    try:
+        _shutil.rmtree(trace_dir)
+        removed.append(str(trace_dir))
+    except Exception as exc:
+        errors.append(f"trace directory: {exc}")
+
+    if stdout_path.exists():
+        try:
+            stdout_path.unlink()
+            removed.append(str(stdout_path))
+        except Exception as exc:
+            errors.append(f"stdout log: {exc}")
+
+    # Drop any stale in-memory task entry after the durable files are gone.
+    rdagent_processes.pop(str(trace_dir), None)
+
+    if errors:
+        return jsonify(
+            {
+                "error": "Experiment deletion was only partially completed.",
+                "id": trace_id,
+                "removed": removed,
+                "details": errors,
+            }
+        ), 500
+
+    return jsonify(
+        {
+            "deleted": True,
+            "id": trace_id,
+            "removed": removed,
+        }
+    ), 200
+
+
 @app.route("/resume/options", methods=["GET"])
 def resume_options():
     source_id = request.args.get("id", "")
