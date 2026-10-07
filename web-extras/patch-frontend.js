@@ -2811,3 +2811,55 @@ feedbackS49 =
 
 fs.writeFileSync(feedbackP49, feedbackS49);
 console.log("[patch-frontend] P49 unfinished-loop Feedback messaging applied");
+
+
+// P49: an unfinished loop is neutral/incomplete in the left rail, not a red research failure.
+const loopRailP49 = "/src/web/src/components/loop-component.vue";
+let loopRailS49 = fs.readFileSync(loopRailP49, "utf8");
+
+const loopStatusMapP49Old = `  statusList.value = currentData.value.map((item) => {
+    return item.feedbackHypothesis ? item.feedbackHypothesis.decision : false;
+  });`;
+const loopStatusMapP49New = `  statusList.value = currentData.value.map((item) => {
+    if (!item || !item.feedbackHypothesis) return null;
+    return item.feedbackHypothesis.decision === true;
+  });`;
+if (!loopRailS49.includes(loopStatusMapP49Old)) {
+  console.error("[patch-frontend] FAILED: P49 loop status-map anchor drifted.");
+  process.exit(1);
+}
+loopRailS49 = loopRailS49.replace(loopStatusMapP49Old, loopStatusMapP49New);
+
+const loopIconsP49Old = `              <img
+                v-if="statusList[index - 1]"
+                src="@/assets/playground-images/loop-Sucess.svg"
+                alt="loading"
+              />
+              <img
+                v-else
+                src="@/assets/playground-images/loop-error.svg"
+                alt="loading"
+              />`;
+const loopIconsP49New = `              <img
+                v-if="statusList[index - 1] === true"
+                src="@/assets/playground-images/loop-Sucess.svg"
+                alt="success"
+              />
+              <img
+                v-else-if="statusList[index - 1] === false"
+                src="@/assets/playground-images/loop-error.svg"
+                alt="failed"
+              />
+              <img
+                v-else
+                src="@/assets/playground-images/loop-default.svg"
+                alt="incomplete"
+              />`;
+if (!loopRailS49.includes(loopIconsP49Old)) {
+  console.error("[patch-frontend] FAILED: P49 loop icon anchor drifted.");
+  process.exit(1);
+}
+loopRailS49 = loopRailS49.replace(loopIconsP49Old, loopIconsP49New);
+
+fs.writeFileSync(loopRailP49, loopRailS49);
+console.log("[patch-frontend] P49 neutral incomplete-loop status applied to loop rail");
