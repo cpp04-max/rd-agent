@@ -2726,3 +2726,88 @@ resultS48 =
 
 fs.writeFileSync(resultP48, resultS48);
 console.log("[patch-frontend] P48 live RESULT polling/rendering applied to ResultPage.vue");
+
+
+// ------------------------- P49: honest Feedback state for unfinished/stopped loops -------------------------
+const feedbackP49 = "/src/web/src/components/feedback.vue";
+let feedbackS49 = fs.readFileSync(feedbackP49, "utf8");
+
+const hypEmptyP49Old = `        <div class="deduction-content" v-else>
+          <p>
+            No feedback generated due to some errors happened in previous steps.
+          </p>
+        </div>`;
+const hypEmptyP49New = `        <div class="deduction-content feedback-pending" v-else>
+          <h3>{{ updateEnd ? "Feedback not reached" : "Feedback pending" }}</h3>
+          <p v-if="!updateEnd">
+            This loop has not reached the feedback step yet. It may still be running.
+          </p>
+          <p v-else>
+            This loop ended before feedback was generated, so it was not evaluated as
+            a research success or failure. Check the run log for the stop reason.
+          </p>
+        </div>`;
+if (!feedbackS49.includes(hypEmptyP49Old)) {
+  console.error("[patch-frontend] FAILED: P49 hypothesis feedback-empty anchor drifted.");
+  process.exit(1);
+}
+feedbackS49 = feedbackS49.replace(hypEmptyP49Old, hypEmptyP49New);
+
+const chartEmptyP49Old = `        <div class="deduction-chart" v-else>
+          <p style="padding-left: 1.875em">
+            No feedback generated due to some errors happened in previous steps.
+          </p>
+        </div>`;
+const chartEmptyP49New = `        <div class="deduction-chart feedback-pending" v-else>
+          <p style="padding-left: 1.875em">
+            {{
+              updateEnd
+                ? "No return chart was produced because this loop ended before backtest feedback completed."
+                : "Return chart is not available yet. It will appear after the running/backtest step completes."
+            }}
+          </p>
+        </div>`;
+if (!feedbackS49.includes(chartEmptyP49Old)) {
+  console.error("[patch-frontend] FAILED: P49 return-chart empty anchor drifted.");
+  process.exit(1);
+}
+feedbackS49 = feedbackS49.replace(chartEmptyP49Old, chartEmptyP49New);
+
+const configEmptyP49Old = `        <div v-else>
+          <p style="padding-left: 1.875em">
+            No feedback generated due to some errors happened in previous steps.
+          </p>
+        </div>`;
+const configEmptyP49New = `        <div v-else>
+          <p style="padding-left: 1.875em">
+            Configuration is not available for this loop yet.
+          </p>
+        </div>`;
+if (!feedbackS49.includes(configEmptyP49Old)) {
+  console.error("[patch-frontend] FAILED: P49 feedback-config empty anchor drifted.");
+  process.exit(1);
+}
+feedbackS49 = feedbackS49.replace(configEmptyP49Old, configEmptyP49New);
+
+const feedbackStyleEndP49 = "</style>";
+const feedbackStyleP49 = `
+.feedback-pending {
+  color: #687189;
+}
+
+.feedback-pending h3 {
+  color: #3f485c;
+}
+`;
+const feedbackStyleIndexP49 = feedbackS49.lastIndexOf(feedbackStyleEndP49);
+if (feedbackStyleIndexP49 === -1) {
+  console.error("[patch-frontend] FAILED: P49 feedback style end missing.");
+  process.exit(1);
+}
+feedbackS49 =
+  feedbackS49.slice(0, feedbackStyleIndexP49) +
+  feedbackStyleP49 +
+  feedbackS49.slice(feedbackStyleIndexP49);
+
+fs.writeFileSync(feedbackP49, feedbackS49);
+console.log("[patch-frontend] P49 unfinished-loop Feedback messaging applied");
