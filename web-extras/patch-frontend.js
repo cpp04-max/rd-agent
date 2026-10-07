@@ -3391,10 +3391,12 @@ if (!historyFastS52.includes(mountedHistoryP52Old)) {
 historyFastS52 = historyFastS52.replace(mountedHistoryP52Old, mountedHistoryP52New);
 
 const historyStyleP52Anchor = `.history-resume-status.error {
-  color: #b42318;
+  background: #fff1f1;
+  color: #a73535;
 }`;
 const historyStyleP52New = `.history-resume-status.error {
-  color: #b42318;
+  background: #fff1f1;
+  color: #a73535;
 }
 
 .history-list-loading {
