@@ -1962,4 +1962,219 @@ patch(
 )
 
 
+
+# ---------------------------------------------------------------- P55 CoderError + factor-data robustness
+# A factor implementation can legitimately end with a CoderError after CoSTEER
+# exhausts its repair attempts. P46 preserved the raw exception on HypothesisFeedback
+# (useful for durable state), but upstream WebStorage copied that Python object directly
+# into requests.post(json=...), which crashes JSON serialization. Also, the factor
+# workspace silently creates an empty source-data directory after a fresh Fly deploy
+# instead of regenerating daily_pv.h5. Fix both failure paths.
+
+_WEBSTORAGE_CLASS_OLD = '''class WebStorage(Storage):
+    """
+    The storage for web app.
+    It is used to provide the data for the web app.
+    """
+'''
+_WEBSTORAGE_CLASS_NEW = '''class WebStorage(Storage):
+    """
+    The storage for web app.
+    It is used to provide the data for the web app.
+    """
+
+    @staticmethod
+    def _json_safe(value):
+        """Recursively convert UI payloads to strict JSON-safe values.
+
+        Durable FileStorage may keep rich Python objects such as exceptions, but
+        the web transport must never crash the research loop merely because a
+        feedback object contains a CoderError (or another non-JSON-native type).
+        """
+        import math
+
+        if value is None or isinstance(value, (str, int, bool)):
+            return value
+        if isinstance(value, float):
+            return value if math.isfinite(value) else None
+        if isinstance(value, BaseException):
+            return str(value)
+        if isinstance(value, datetime):
+            return value.isoformat()
+        if isinstance(value, Path):
+            return str(value)
+        if isinstance(value, dict):
+            return {str(k): WebStorage._json_safe(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple, set)):
+            return [WebStorage._json_safe(v) for v in value]
+
+        # numpy/pandas scalar types commonly expose item().
+        item = getattr(value, "item", None)
+        if callable(item):
+            try:
+                return WebStorage._json_safe(item())
+            except Exception:
+                pass
+        return str(value)
+'''
+patch(
+    "rdagent/log/ui/storage.py",
+    _WEBSTORAGE_CLASS_OLD,
+    _WEBSTORAGE_CLASS_NEW,
+    "P55 add strict JSON-safe UI payload conversion",
+)
+
+_WEBSTORAGE_POST_OLD = '''            if not data:
+                return "Normal log, skipped"
+            if isinstance(data, list):
+'''
+_WEBSTORAGE_POST_NEW = '''            if not data:
+                return "Normal log, skipped"
+            data = self._json_safe(data)
+            if isinstance(data, list):
+'''
+patch(
+    "rdagent/log/ui/storage.py",
+    _WEBSTORAGE_POST_OLD,
+    _WEBSTORAGE_POST_NEW,
+    "P55 sanitize UI payload before requests.post(json=...)",
+)
+
+_FACTOR_DATA_OLD = '''            source_data_path.mkdir(exist_ok=True, parents=True)
+            code_path = self.workspace_path / f"factor.py"
+'''
+_FACTOR_DATA_NEW = '''            # On Fly the application root is replaced on deploy. The default
+            # factor source-data folders live under git_ignore_folder, so a fresh
+            # image can have no daily_pv.h5. The old code silently mkdir'ed an empty
+            # folder and then every generated factor failed with FileNotFoundError.
+            if self.target_task.version == 1 and not (source_data_path / "daily_pv.h5").exists():
+                _prepare_lock_path = source_data_path.parent / ".factor_data_prepare.lock"
+                _prepare_lock_path.parent.mkdir(exist_ok=True, parents=True)
+                with FileLock(_prepare_lock_path):
+                    if not (source_data_path / "daily_pv.h5").exists():
+                        from rdagent.scenarios.qlib.experiment.utils import generate_data_folder_from_qlib
+
+                        generate_data_folder_from_qlib()
+
+            source_data_path.mkdir(exist_ok=True, parents=True)
+            if self.target_task.version == 1 and not (source_data_path / "daily_pv.h5").exists():
+                raise FileNotFoundError(
+                    f"RD-Agent factor source data is missing after preparation: "
+                    f"{source_data_path / 'daily_pv.h5'}"
+                )
+
+            code_path = self.workspace_path / f"factor.py"
+'''
+patch(
+    "rdagent/components/coder/factor_coder/factor.py",
+    _FACTOR_DATA_OLD,
+    _FACTOR_DATA_NEW,
+    "P55 regenerate/verify daily_pv.h5 before factor execution",
+)
+
+_P46_EXEC_HELPERS_OLD = '''def _is_execution_failure(exc: Exception | str | None) -> bool:
+    """Return True for runtime/infrastructure failures, not research rejection."""
+    text = str(exc or "")
+    lower = text.lower()
+    return (
+        "failed to run this experiment" in lower
+        or ("failed to run " in lower and " model, because " in lower)
+        or "qrun_exit_code=" in lower
+        or "no result file found" in lower
+        or "\\nkilled" in lower
+        or "process was killed" in lower
+        or "running time exceeds" in lower
+        or "qrun timed out" in lower
+    )
+
+
+def _execution_failure_reason(exc: Exception | str | None) -> str:
+    text = str(exc or "")
+    lower = text.lower()
+    if "qrun_exit_code=137" in lower or "qrun_exit_code=-9" in lower or "\\nkilled" in lower:
+        return (
+            "Execution failed: the Qlib process was killed before producing a complete "
+            "backtest result. This is an infrastructure/resource failure (commonly "
+            "memory pressure/OOM), not evidence that the research hypothesis is bad."
+        )
+    if "qrun_exit_code=124" in lower or "timed out" in lower or "running time exceeds" in lower:
+        return (
+            "Execution failed: the Qlib run timed out before producing a complete "
+            "backtest result. Retry/repair the execution before evaluating the hypothesis."
+        )
+    return (
+        "Execution failed: Qlib did not produce a valid backtest result. "
+        "Retry/repair the execution before generating a new research hypothesis."
+    )
+
+
+class QuantRDLoop(RDLoop):
+'''
+_P46_EXEC_HELPERS_NEW = '''def _is_execution_failure(exc: Exception | str | None) -> bool:
+    """Return True when the experiment never produced a valid runnable result.
+
+    Scientific rejection is handled later by the evaluator with no exception.
+    CoderError/FactorEmptyError/ModelEmptyError therefore represent implementation
+    or execution failure, not evidence against the research hypothesis.
+    """
+    text = str(exc or "")
+    lower = text.lower()
+    return (
+        isinstance(exc, (FactorEmptyError, ModelEmptyError))
+        or "all tasks are failed" in lower
+        or "expected output file not found" in lower
+        or "filenotfounderror" in lower
+        or "failed to run this experiment" in lower
+        or ("failed to run " in lower and " model, because " in lower)
+        or "qrun_exit_code=" in lower
+        or "no result file found" in lower
+        or "\\nkilled" in lower
+        or "process was killed" in lower
+        or "running time exceeds" in lower
+        or "qrun timed out" in lower
+    )
+
+
+def _execution_failure_reason(exc: Exception | str | None) -> str:
+    text = str(exc or "")
+    lower = text.lower()
+    if "qrun_exit_code=137" in lower or "qrun_exit_code=-9" in lower or "\\nkilled" in lower:
+        return (
+            "Execution failed: the Qlib process was killed before producing a complete "
+            "backtest result. This is an infrastructure/resource failure (commonly "
+            "memory pressure/OOM), not evidence that the research hypothesis is bad."
+        )
+    if "qrun_exit_code=124" in lower or "timed out" in lower or "running time exceeds" in lower:
+        return (
+            "Execution failed: the Qlib run timed out before producing a complete "
+            "backtest result. Retry/repair the execution before evaluating the hypothesis."
+        )
+    if (
+        isinstance(exc, (FactorEmptyError, ModelEmptyError))
+        or "all tasks are failed" in lower
+        or "expected output file not found" in lower
+        or "filenotfounderror" in lower
+    ):
+        return (
+            "Execution failed: the generated factor/model implementation did not produce "
+            "a valid runnable output. This is an implementation/execution failure, not "
+            "scientific evidence against the hypothesis. Retry this loop from coding "
+            "after repairing the implementation/runtime data dependency."
+        )
+    return (
+        "Execution failed: Qlib did not produce a valid backtest result. "
+        "Retry/repair the execution before generating a new research hypothesis."
+    )
+
+
+class QuantRDLoop(RDLoop):
+'''
+patch(
+    "rdagent/app/qlib_rd_loop/quant.py",
+    _P46_EXEC_HELPERS_OLD,
+    _P46_EXEC_HELPERS_NEW,
+    "P55 classify CoderError/no-output as execution failure",
+)
+
+
 print("All rdagent patches applied.", flush=True)
