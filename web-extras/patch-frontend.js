@@ -3410,3 +3410,97 @@ historyFastS52 = historyFastS52.replace(historyStyleP52Anchor, historyStyleP52Ne
 
 fs.writeFileSync(historyFastP52, historyFastS52);
 console.log("[patch-frontend] P52 immediate Previous Experiments opening applied");
+
+
+// ------------------------- P53: resume-aware progress + loop rail -------------------------
+const resumeProgressP53 = "/src/web/src/views/PlaygroundPage.vue";
+let resumeProgressS53 = fs.readFileSync(resumeProgressP53, "utf8");
+
+// User-facing loop numbers are 1-based. wfLoop remains the backend/internal 0-based id.
+resumeProgressS53 = resumeProgressS53.replaceAll(
+  "Loop {{ wfLoop }} · stage",
+  "Loop {{ wfLoop + 1 }} · stage"
+);
+
+const resetWfP53Old = `const resetWf = () => {
+  wfCurLoop = -1; wfCurStage = "";
+  for (const k of Object.keys(wfStageStart)) delete wfStageStart[k];
+  for (const k of Object.keys(wfStageDone)) delete wfStageDone[k];
+  wfLoop.value = 0; wfStepIndex.value = 0; wfTotal.value = wfStages.length;
+  wfStepName.value = wfStages[0]; wfPct.value = 0;
+  wfElapsedSec.value = 0; wfRemainingSec.value = 0; wfPerLoopSec.value = 0;
+};`;
+
+const resetWfP53New = `const resetWf = (internalLoop = 0, stepIndex = 0) => {
+  const safeLoop = Number.isInteger(Number(internalLoop))
+    ? Math.max(0, Number(internalLoop))
+    : 0;
+  const safeStep = Number.isInteger(Number(stepIndex))
+    ? Math.max(0, Math.min(wfStages.length - 1, Number(stepIndex)))
+    : 0;
+  wfCurLoop = -1; wfCurStage = "";
+  for (const k of Object.keys(wfStageStart)) delete wfStageStart[k];
+  for (const k of Object.keys(wfStageDone)) delete wfStageDone[k];
+  wfLoop.value = safeLoop;
+  wfStepIndex.value = safeStep;
+  wfTotal.value = wfStages.length;
+  wfStepName.value = wfStages[safeStep];
+  wfPct.value = 0;
+  wfElapsedSec.value = 0; wfRemainingSec.value = 0; wfPerLoopSec.value = 0;
+};
+
+const applyResumeProgressSeed = (payload) => {
+  const uiLoop = Number(payload?.resume_start_loop_number);
+  if (!Number.isInteger(uiLoop) || uiLoop < 1) return;
+
+  const internalLoop = uiLoop - 1;
+  const stepIndexRaw = Number(payload?.resume_start_step_index);
+  const stepIndex = Number.isInteger(stepIndexRaw)
+    ? Math.max(0, Math.min(wfStages.length - 1, stepIndexRaw))
+    : 0;
+
+  // Only seed before a real tqdm workflow line has established the active loop.
+  // Once ingestProgress() has parsed real runtime state, that remains authoritative.
+  if (wfCurLoop < 0) {
+    wfLoop.value = internalLoop;
+    wfStepIndex.value = stepIndex;
+    wfStepName.value =
+      String(payload?.resume_start_step_name || "").trim() ||
+      wfStages[stepIndex];
+  }
+
+  loadingIndex.value = uiLoop;
+
+  const totalLoop = Number(payload?.resume_total_loop_number);
+  if (Number.isInteger(totalLoop) && totalLoop >= uiLoop) {
+    loopNumber.value = Math.max(loopNumber.value, totalLoop);
+  } else {
+    loopNumber.value = Math.max(loopNumber.value, uiLoop);
+  }
+};`;
+
+if (!resumeProgressS53.includes(resetWfP53Old)) {
+  console.error("[patch-frontend] FAILED: P53 resetWf anchor drifted.");
+  process.exit(1);
+}
+resumeProgressS53 = resumeProgressS53.replace(resetWfP53Old, resetWfP53New);
+
+const pollResponseP53Old = `    .then((j) => {
+      if (!j) throw new Error("bad response");
+      if (typeof j.offset === "number") activityOffset = j.offset;
+      if (j.text) {`;
+
+const pollResponseP53New = `    .then((j) => {
+      if (!j) throw new Error("bad response");
+      applyResumeProgressSeed(j);
+      if (typeof j.offset === "number") activityOffset = j.offset;
+      if (j.text) {`;
+
+if (!resumeProgressS53.includes(pollResponseP53Old)) {
+  console.error("[patch-frontend] FAILED: P53 progress response anchor drifted.");
+  process.exit(1);
+}
+resumeProgressS53 = resumeProgressS53.replace(pollResponseP53Old, pollResponseP53New);
+
+fs.writeFileSync(resumeProgressP53, resumeProgressS53);
+console.log("[patch-frontend] P53 resume-aware progress/loop rail applied");

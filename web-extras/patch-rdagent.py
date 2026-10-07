@@ -1301,6 +1301,21 @@ _QUANT_LOAD_NEW = '''    if path is None:
         )
 
     quant_loop._init_base_features(base_features_path)
+
+    if path is not None:
+        _active_loop_idx = int(getattr(quant_loop, "_resume_start_loop_idx", 0) or 0)
+        _active_step_idx = int(quant_loop.step_idx.get(_active_loop_idx, 0))
+        _active_step_name = (
+            quant_loop.steps[_active_step_idx]
+            if 0 <= _active_step_idx < len(quant_loop.steps)
+            else "complete"
+        )
+        print(
+            f"[rd-agent] RESUME_ACTIVE ui_loop={_active_loop_idx + 1} "
+            f"internal_loop={_active_loop_idx} next_step={_active_step_name} "
+            f"step_index={_active_step_idx}",
+            flush=True,
+        )
 '''
 patch(
     "rdagent/app/qlib_rd_loop/quant.py",
