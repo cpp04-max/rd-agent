@@ -3659,3 +3659,7 @@ resultS55 = resultS55.replace(genericExecReasonP55Old, genericExecReasonP55New);
 
 fs.writeFileSync(resultP55, resultS55);
 console.log("[patch-frontend] P55 coder/no-output execution-failure UI applied");
+
+
+// P56 history management UI
+require("./patch-history-p56.js");
