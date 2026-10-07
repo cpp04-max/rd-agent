@@ -2402,3 +2402,327 @@ if (!resultS46.includes(detailStatusP46Old)) { console.error("[patch-frontend] F
 resultS46 = resultS46.replace(detailStatusP46Old, detailStatusP46New);
 fs.writeFileSync(resultP46, resultS46);
 console.log("[patch-frontend] P46 execution-failure status/reason UI applied to ResultPage.vue");
+
+
+// ------------------------- P48: live RESULT while the run is still active -------------------------
+const apiP48Path = "/src/web/src/utils/api.js";
+let apiS48 = fs.readFileSync(apiP48Path, "utf8");
+const apiP48Anchor = `export function getResumeOptions(traceId) {`;
+const apiP48Insert = `export function getLiveResults(traceId) {
+    const query = new URLSearchParams({ id: traceId });
+    return request({
+        url: url + "result/live?" + query.toString(),
+        method: "get"
+    });
+}
+
+export function getResumeOptions(traceId) {`;
+if (!apiS48.includes(apiP48Anchor)) {
+  console.error("[patch-frontend] FAILED: P48 api anchor drifted.");
+  process.exit(1);
+}
+apiS48 = apiS48.replace(apiP48Anchor, apiP48Insert);
+fs.writeFileSync(apiP48Path, apiS48);
+console.log("[patch-frontend] P48 live-result API helper applied to api.js");
+
+const pgP48 = "/src/web/src/views/PlaygroundPage.vue";
+let pgS48 = fs.readFileSync(pgP48, "utf8");
+const loadingResultP48Old =
+  '<div class="tab-item-btn" v-if="resultData.length == 0 && !updateEnd && !stopFlag">';
+const loadingResultP48New =
+  '<div class="tab-item-btn" v-if="resultData.length == 0 && !updateEnd && !stopFlag" @click="tabIndex = 1" :class="{ active: tabIndex == 1 }">';
+if (!pgS48.includes(loadingResultP48Old)) {
+  console.error("[patch-frontend] FAILED: P48 RESULT loading-tab anchor drifted.");
+  process.exit(1);
+}
+pgS48 = pgS48.replace(loadingResultP48Old, loadingResultP48New);
+fs.writeFileSync(pgP48, pgS48);
+console.log("[patch-frontend] P48 RESULT tab is clickable before the first loop completes");
+
+const resultP48 = "/src/web/src/views/ResultPage.vue";
+let resultS48 = fs.readFileSync(resultP48, "utf8");
+
+const vueImportP48Old =
+  'import { ref, watch, computed, defineProps, onMounted, nextTick } from "vue";';
+const vueImportP48New =
+  'import { ref, watch, computed, defineProps, onMounted, onUnmounted, nextTick } from "vue";';
+if (!resultS48.includes(vueImportP48Old)) {
+  console.error("[patch-frontend] FAILED: P48 Vue import anchor drifted.");
+  process.exit(1);
+}
+resultS48 = resultS48.replace(vueImportP48Old, vueImportP48New);
+
+const apiImportP48Old =
+  'import { getStdoutDownloadUrl, getResumeOptions, resumeTrace } from "../utils/api";';
+const apiImportP48New =
+  'import { getStdoutDownloadUrl, getResumeOptions, resumeTrace, getLiveResults } from "../utils/api";';
+if (!resultS48.includes(apiImportP48Old)) {
+  console.error("[patch-frontend] FAILED: P48 ResultPage API import anchor drifted.");
+  process.exit(1);
+}
+resultS48 = resultS48.replace(apiImportP48Old, apiImportP48New);
+
+const stateP48Anchor = "const metricData = ref(null);";
+const stateP48New = `const metricData = ref(null);
+const liveResultRows = ref([]);
+const liveResultAlive = ref(false);
+const liveResultLastUpdated = ref("");
+let liveResultTimer = null;
+let liveResultRequestInFlight = false;`;
+if (!resultS48.includes(stateP48Anchor)) {
+  console.error("[patch-frontend] FAILED: P48 live state anchor drifted.");
+  process.exit(1);
+}
+resultS48 = resultS48.replace(stateP48Anchor, stateP48New);
+
+const rowsP48Old =
+  "  const rows = Array.isArray(currentData.value) ? currentData.value : [];";
+const rowsP48New = `  const propRows = Array.isArray(currentData.value) ? currentData.value : [];
+  const liveRows = Array.isArray(liveResultRows.value) ? liveResultRows.value : [];
+  const liveByLoop = new Map(
+    liveRows
+      .filter((item) => item && Number.isInteger(Number(item.loop_id)))
+      .map((item) => [Number(item.loop_id), item])
+  );
+  const maxLoopId = liveRows.reduce((maxValue, item) => {
+    const loopId = Number(item?.loop_id);
+    return Number.isInteger(loopId) ? Math.max(maxValue, loopId) : maxValue;
+  }, -1);
+  const rowCount = Math.max(propRows.length, maxLoopId + 1);
+  const rows = Array.from({ length: rowCount }, (_, index) => {
+    const base =
+      propRows[index] && typeof propRows[index] === "object"
+        ? propRows[index]
+        : {};
+    const live = liveByLoop.get(index);
+    if (!live) return base;
+
+    return {
+      ...base,
+      researchHypothesis:
+        live.researchHypothesis || base.researchHypothesis || null,
+      feedbackMetric:
+        live.feedbackMetric || base.feedbackMetric || null,
+      feedbackHypothesis:
+        live.feedbackHypothesis || base.feedbackHypothesis || null,
+      _liveLoopId: index,
+      _liveComplete: Boolean(live.complete),
+    };
+  });`;
+if (!resultS48.includes(rowsP48Old)) {
+  console.error("[patch-frontend] FAILED: P48 rows merge anchor drifted.");
+  process.exit(1);
+}
+resultS48 = resultS48.replace(rowsP48Old, rowsP48New);
+
+const statusP48Old = `    const rowStatus = executionFailed
+      ? "execution_failed"
+      : decision === true
+        ? "success"
+        : decision === false
+          ? "research_failed"
+          : "incomplete";`;
+const statusP48New = `    const hasFeedback = Object.keys(feedback).length > 0;
+    const isLatestRow = index === rows.length - 1;
+    const rowStatus = executionFailed
+      ? "execution_failed"
+      : decision === true
+        ? "success"
+        : decision === false
+          ? "research_failed"
+          : (!hasFeedback && liveResultAlive.value && isLatestRow)
+            ? "running"
+            : "incomplete";`;
+if (!resultS48.includes(statusP48Old)) {
+  console.error("[patch-frontend] FAILED: P48 row-status anchor drifted.");
+  process.exit(1);
+}
+resultS48 = resultS48.replace(statusP48Old, statusP48New);
+
+const mainStatusP48Old =
+  '<span v-else-if="scope.row.status === \'research_failed\'" class="fail">Research Failed</span>\n                <span v-else class="fail">Incomplete</span>';
+const mainStatusP48New =
+  '<span v-else-if="scope.row.status === \'research_failed\'" class="fail">Research Failed</span>\n                <span v-else-if="scope.row.status === \'running\'" class="running-status">Running</span>\n                <span v-else class="fail">Incomplete</span>';
+if (!resultS48.includes(mainStatusP48Old)) {
+  console.error("[patch-frontend] FAILED: P48 main Running status anchor drifted.");
+  process.exit(1);
+}
+resultS48 = resultS48.replace(mainStatusP48Old, mainStatusP48New);
+
+const detailStatusP48Old =
+  '<span v-else-if="props.row.status === \'research_failed\'" class="fail"\n                        >Research Failed</span\n                      >\n                      <span v-else class="fail">Incomplete</span>';
+const detailStatusP48New =
+  '<span v-else-if="props.row.status === \'research_failed\'" class="fail"\n                        >Research Failed</span\n                      >\n                      <span v-else-if="props.row.status === \'running\'" class="running-status"\n                        >Running</span\n                      >\n                      <span v-else class="fail">Incomplete</span>';
+if (!resultS48.includes(detailStatusP48Old)) {
+  console.error("[patch-frontend] FAILED: P48 detail Running status anchor drifted.");
+  process.exit(1);
+}
+resultS48 = resultS48.replace(detailStatusP48Old, detailStatusP48New);
+
+const emptyP48Old =
+  "          No structured result events are available for this trace yet. The raw run log can still be downloaded above.";
+const emptyP48New =
+  '          {{ liveResultAlive ? "Run is in progress. Results will appear here as soon as each loop writes metrics or feedback." : "No structured result events are available for this trace yet. The raw run log can still be downloaded above." }}';
+if (!resultS48.includes(emptyP48Old)) {
+  console.error("[patch-frontend] FAILED: P48 empty-state anchor drifted.");
+  process.exit(1);
+}
+resultS48 = resultS48.replace(emptyP48Old, emptyP48New);
+
+const metricsTitleP48Old = "        <h2>Metrics</h2>";
+const metricsTitleP48New = `        <div class="live-result-strip">
+          <span class="live-result-dot" :class="{ active: liveResultAlive }"></span>
+          <strong>{{ liveResultAlive ? "LIVE RESULTS" : "RESULT SNAPSHOT" }}</strong>
+          <span>
+            {{ liveResultRows.length }}
+            {{ liveResultRows.length === 1 ? "loop" : "loops" }} available
+          </span>
+          <span v-if="liveResultAlive" class="live-result-note">
+            updates automatically while the experiment is running
+          </span>
+        </div>
+        <h2>Metrics</h2>`;
+if (!resultS48.includes(metricsTitleP48Old)) {
+  console.error("[patch-frontend] FAILED: P48 Metrics title anchor drifted.");
+  process.exit(1);
+}
+resultS48 = resultS48.replace(metricsTitleP48Old, metricsTitleP48New);
+
+const downloadAnchorP48 = "const downloadLogs = async () => {";
+const pollingP48 = `const scheduleLiveResultPoll = (delay = 3500) => {
+  if (liveResultTimer) clearTimeout(liveResultTimer);
+  liveResultTimer = setTimeout(pollLiveResults, delay);
+};
+
+const pollLiveResults = async () => {
+  if (liveResultRequestInFlight) return;
+  const traceId = getTraceId();
+  if (!traceId) return;
+
+  liveResultRequestInFlight = true;
+  try {
+    const snapshot = await getLiveResults(traceId);
+    liveResultRows.value = Array.isArray(snapshot?.loops) ? snapshot.loops : [];
+    liveResultAlive.value = Boolean(snapshot?.alive);
+    liveResultLastUpdated.value = snapshot?.updated_at || "";
+    updateData();
+
+    if (liveResultAlive.value) {
+      scheduleLiveResultPoll(3500);
+    }
+  } catch (error) {
+    // The trace can briefly be unavailable while a new run is being created.
+    // Keep retrying without interrupting the normal /trace UI stream.
+    scheduleLiveResultPoll(6000);
+  } finally {
+    liveResultRequestInFlight = false;
+  }
+};
+
+`;
+if (!resultS48.includes(downloadAnchorP48)) {
+  console.error("[patch-frontend] FAILED: P48 polling method anchor drifted.");
+  process.exit(1);
+}
+resultS48 = resultS48.replace(downloadAnchorP48, pollingP48 + downloadAnchorP48);
+
+const mountedP48Old = `onMounted(() => {
+  if (currentData.value) {
+    updateData();
+  }
+});`;
+const mountedP48New = `onMounted(() => {
+  if (currentData.value) {
+    updateData();
+  }
+  pollLiveResults();
+});`;
+if (!resultS48.includes(mountedP48Old)) {
+  console.error("[patch-frontend] FAILED: P48 onMounted anchor drifted.");
+  process.exit(1);
+}
+resultS48 = resultS48.replace(mountedP48Old, mountedP48New);
+
+const traceWatchP48Old = `watch(
+  () => props.traceName,
+  (newValue) => {
+    traceName.value = newValue;
+  }
+);`;
+const traceWatchP48New = `watch(
+  () => props.traceName,
+  (newValue) => {
+    traceName.value = newValue;
+    liveResultRows.value = [];
+    liveResultAlive.value = false;
+    liveResultLastUpdated.value = "";
+    pollLiveResults();
+  }
+);
+
+onUnmounted(() => {
+  if (liveResultTimer) {
+    clearTimeout(liveResultTimer);
+    liveResultTimer = null;
+  }
+});`;
+if (!resultS48.includes(traceWatchP48Old)) {
+  console.error("[patch-frontend] FAILED: P48 trace watcher anchor drifted.");
+  process.exit(1);
+}
+resultS48 = resultS48.replace(traceWatchP48Old, traceWatchP48New);
+
+const styleEndP48 = "</style>";
+const styleP48 = `
+.live-result-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.55em;
+  margin: 0 0 1em;
+  padding: 0.65em 0.85em;
+  border: 1px solid #dde4f2;
+  border-radius: 12px;
+  background: #fbfcff;
+  color: #667087;
+  font-size: 0.78em;
+}
+
+.live-result-strip strong {
+  color: #3f485c;
+  letter-spacing: 0.04em;
+}
+
+.live-result-dot {
+  width: 0.62em;
+  height: 0.62em;
+  border-radius: 50%;
+  background: #a8afbd;
+}
+
+.live-result-dot.active {
+  background: #27a45d;
+  box-shadow: 0 0 0 4px rgba(39, 164, 93, 0.12);
+}
+
+.live-result-note {
+  color: #81899b;
+}
+
+.running-status {
+  color: #376fcb;
+  font-weight: 700;
+}
+`;
+const styleIndexP48 = resultS48.lastIndexOf(styleEndP48);
+if (styleIndexP48 === -1) {
+  console.error("[patch-frontend] FAILED: P48 style end missing.");
+  process.exit(1);
+}
+resultS48 =
+  resultS48.slice(0, styleIndexP48) +
+  styleP48 +
+  resultS48.slice(styleIndexP48);
+
+fs.writeFileSync(resultP48, resultS48);
+console.log("[patch-frontend] P48 live RESULT polling/rendering applied to ResultPage.vue");
