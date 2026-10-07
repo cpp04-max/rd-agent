@@ -80,6 +80,9 @@ def _resume_execution_failure_reason(checkpoint_path: Path):
             "failed to run this experiment",
             "qrun_exit_code=",
             "no result file found",
+            "expected output file not found",
+            "all tasks are failed",
+            "filenotfounderror",
             "process was killed",
             "\nkilled",
             "qrun timed out",
@@ -92,6 +95,15 @@ def _resume_execution_failure_reason(checkpoint_path: Path):
                 return (
                     "Execution failed: Qlib was killed before producing a complete "
                     "backtest result; retry from the coding checkpoint after checking memory."
+                )
+            if (
+                "all tasks are failed" in lower
+                or "expected output file not found" in lower
+                or "filenotfounderror" in lower
+            ):
+                return (
+                    "Execution failed: the generated implementation produced no valid "
+                    "output; retry this loop from the coding checkpoint."
                 )
             return "Execution failed: retry this loop from the coding checkpoint."
     except Exception:
