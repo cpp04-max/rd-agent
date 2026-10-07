@@ -3096,13 +3096,17 @@ pollUiS51 = pollUiS51.replace(traceScheduleP51Old, traceScheduleP51New);
 
 const mountedP51Old = `onMounted(() => {
   firstTrace();
+  progressPoll();
 });
 
 // 在组件被卸载前移除全局点击事件监听
-onUnmounted(() => {});`;
+onUnmounted(() => {
+  if (activityTimer) clearTimeout(activityTimer);
+});`;
 const mountedP51New = `onMounted(() => {
   tracePollDisposed = false;
   firstTrace();
+  progressPoll();
 });
 
 onUnmounted(() => {
@@ -3110,6 +3114,10 @@ onUnmounted(() => {
   if (tracePollTimer) {
     clearTimeout(tracePollTimer);
     tracePollTimer = undefined;
+  }
+  if (activityTimer) {
+    clearTimeout(activityTimer);
+    activityTimer = undefined;
   }
   if (transitionTimer) {
     clearTimeout(transitionTimer);
