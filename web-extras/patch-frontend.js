@@ -3626,13 +3626,13 @@ const resultP55 = "/src/web/src/views/ResultPage.vue";
 let resultS55 = fs.readFileSync(resultP55, "utf8");
 
 const executionMarkersP55Old =
-  '    text.includes("no result file found") ||\\n' +
+  '    text.includes("no result file found") ||\n' +
   '    text.includes("process was killed") ||';
 const executionMarkersP55New =
-  '    text.includes("no result file found") ||\\n' +
-  '    text.includes("expected output file not found") ||\\n' +
-  '    text.includes("all tasks are failed") ||\\n' +
-  '    text.includes("filenotfounderror") ||\\n' +
+  '    text.includes("no result file found") ||\n' +
+  '    text.includes("expected output file not found") ||\n' +
+  '    text.includes("all tasks are failed") ||\n' +
+  '    text.includes("filenotfounderror") ||\n' +
   '    text.includes("process was killed") ||';
 if (!resultS55.includes(executionMarkersP55Old)) {
   console.error("[patch-frontend] FAILED: P55 execution marker anchor drifted.");
@@ -3643,13 +3643,13 @@ resultS55 = resultS55.replace(executionMarkersP55Old, executionMarkersP55New);
 const genericExecReasonP55Old =
   '    return "Execution failed: Qlib did not produce a valid backtest result. This is not evidence that the research hypothesis is bad.";';
 const genericExecReasonP55New =
-  '    if (\\n' +
-  '      lower.includes("all tasks are failed") ||\\n' +
-  '      lower.includes("expected output file not found") ||\\n' +
-  '      lower.includes("filenotfounderror")\\n' +
-  '    ) {\\n' +
-  '      return "Execution failed: the generated implementation did not produce a valid runnable output. Retry this same loop after repairing the code/data dependency.";\\n' +
-  '    }\\n' +
+  '    if (\n' +
+  '      lower.includes("all tasks are failed") ||\n' +
+  '      lower.includes("expected output file not found") ||\n' +
+  '      lower.includes("filenotfounderror")\n' +
+  '    ) {\n' +
+  '      return "Execution failed: the generated implementation did not produce a valid runnable output. Retry this same loop after repairing the code/data dependency.";\n' +
+  '    }\n' +
   '    return "Execution failed: Qlib did not produce a valid backtest result. This is not evidence that the research hypothesis is bad.";';
 if (!resultS55.includes(genericExecReasonP55Old)) {
   console.error("[patch-frontend] FAILED: P55 execution reason anchor drifted.");
