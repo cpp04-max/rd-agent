@@ -2863,3 +2863,24 @@ loopRailS49 = loopRailS49.replace(loopIconsP49Old, loopIconsP49New);
 
 fs.writeFileSync(loopRailP49, loopRailS49);
 console.log("[patch-frontend] P49 neutral incomplete-loop status applied to loop rail");
+
+
+// ------------------------- P50: make the active resume loop explicit -------------------------
+const resumeUiP50 = "/src/web/src/views/Playground.vue";
+let resumeUiS50 = fs.readFileSync(resumeUiP50, "utf8");
+const resumeToastP50Old = `    ElMessage.success(
+      "Continuation started from the selected experiment loop."
+    );`;
+const resumeToastP50New = `    const activeLoopNumber = Number(result?.resume_start_loop_number);
+    ElMessage.success(
+      Number.isFinite(activeLoopNumber)
+        ? \`Continuation started at Loop \${activeLoopNumber}. Earlier loops are retained only as history.\`
+        : "Continuation started from the selected experiment loop."
+    );`;
+if (!resumeUiS50.includes(resumeToastP50Old)) {
+  console.error("[patch-frontend] FAILED: P50 continuation toast anchor drifted.");
+  process.exit(1);
+}
+resumeUiS50 = resumeUiS50.replace(resumeToastP50Old, resumeToastP50New);
+fs.writeFileSync(resumeUiP50, resumeUiS50);
+console.log("[patch-frontend] P50 active resume-loop message applied to Playground.vue");
