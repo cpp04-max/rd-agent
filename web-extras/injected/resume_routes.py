@@ -524,6 +524,39 @@ def resume_trace():
     rdagent_processes[str(dest_dir)] = task
     task.start()
 
+    # P57: do not report a successful continuation if the child process dies
+    # immediately during startup. A normal fin_quant run cannot legitimately
+    # finish within this short grace period.
+    import time as _time
+    _time.sleep(0.25)
+    if task.process is not None and task.process.exitcode is not None:
+        _exit_code = task.process.exitcode
+        _tail = ""
+        try:
+            if stdout_path.exists():
+                _tail = stdout_path.read_text(
+                    encoding="utf-8", errors="replace"
+                )[-6000:]
+        except Exception:
+            _tail = ""
+        app.logger.error(
+            "Continuation process %s exited immediately with code %s. Tail: %s",
+            f"Finance Whole Pipeline/{branch_name}",
+            _exit_code,
+            _tail[-1500:],
+        )
+        return jsonify(
+            {
+                "error": (
+                    f"Continuation process exited immediately with code {_exit_code}. "
+                    "The new trace was kept for diagnosis."
+                ),
+                "id": f"Finance Whole Pipeline/{branch_name}",
+                "exit_code": _exit_code,
+                "log_tail": _tail,
+            }
+        ), 500
+
     app.logger.warning(
         "Resumed trace %s -> %s from %s with %d additional loops and %.2fh",
         source_id,
