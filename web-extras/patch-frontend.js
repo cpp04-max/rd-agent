@@ -2884,3 +2884,243 @@ if (!resumeUiS50.includes(resumeToastP50Old)) {
 resumeUiS50 = resumeUiS50.replace(resumeToastP50Old, resumeToastP50New);
 fs.writeFileSync(resumeUiP50, resumeUiS50);
 console.log("[patch-frontend] P50 active resume-loop message applied to Playground.vue");
+
+
+// ------------------------- P51: previous-experiment history consistency -------------------------
+const historyUiP51 = "/src/web/src/views/Playground.vue";
+let historyUiS51 = fs.readFileSync(historyUiP51, "utf8");
+
+const historyBuildP51Old = `async function buildHistoryTraceList() {
+  const groupedTraceMap = new Map();
+  const completedIdList = getCompletedIdList();
+  const backendTraceIds = await getHistoryTraceIds().then((response) =>
+    Array.isArray(response) ? response : []
+  ).catch(() => []);
+
+  const traceIdList = [...new Set([...completedIdList, ...backendTraceIds])];
+  traceIdList.forEach((traceId) => appendTraceId(groupedTraceMap, traceId));
+
+  historyScenarioList.value = Array.from(groupedTraceMap.entries()).map(
+    ([scenario, traceMap]) => ({
+      name: scenario,
+      children: Array.from(traceMap.values()),
+    })
+  );
+
+  const lastCompletedTraceId = String(
+    completedIdList[completedIdList.length - 1] || ""
+  ).trim();
+  const separatorIndex = lastCompletedTraceId.indexOf("/");
+  const lastScenarioName =
+    separatorIndex === -1 ? "" : lastCompletedTraceId.slice(0, separatorIndex);
+  const defaultScenarioIndex = historyScenarioList.value.findIndex(
+    (scenario) => scenario.name === lastScenarioName
+  );
+  const defaultScenario =
+    defaultScenarioIndex >= 0
+      ? historyScenarioList.value[defaultScenarioIndex]
+      : historyScenarioList.value[historyScenarioList.value.length - 1] || null;
+
+  selectLastHistoryTrace(defaultScenario, defaultScenarioIndex);
+  await loadHistoryResumeOptions();
+}`;
+
+const historyBuildP51New = `async function buildHistoryTraceList() {
+  const groupedTraceMap = new Map();
+  const completedIdList = getCompletedIdList();
+
+  // The backend /traces endpoint reflects what actually exists on persistent
+  // storage. localStorage is only a fallback for a temporary backend failure.
+  let backendTraceIds = [];
+  let backendHistoryAvailable = false;
+  try {
+    const response = await getHistoryTraceIds();
+    backendHistoryAvailable = true;
+    backendTraceIds = Array.isArray(response)
+      ? response.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+  } catch {
+    backendHistoryAvailable = false;
+  }
+
+  const traceIdList = backendHistoryAvailable
+    ? [...new Set(backendTraceIds)]
+    : [...new Set(completedIdList)];
+
+  // Prune browser-only stale IDs after trace cleanup so deleted experiments do
+  // not remain selectable forever.
+  if (backendHistoryAvailable) {
+    const backendSet = new Set(backendTraceIds);
+    const prunedCompletedIds = completedIdList.filter((traceId) =>
+      backendSet.has(String(traceId || "").trim())
+    );
+    if (prunedCompletedIds.length !== completedIdList.length) {
+      localStorage.setItem(
+        completedTraceStorageKey,
+        JSON.stringify(prunedCompletedIds)
+      );
+    }
+  }
+
+  traceIdList.forEach((traceId) => appendTraceId(groupedTraceMap, traceId));
+
+  historyScenarioList.value = Array.from(groupedTraceMap.entries()).map(
+    ([scenario, traceMap]) => ({
+      name: scenario,
+      children: Array.from(traceMap.values()),
+    })
+  );
+
+  // Backend returns oldest -> newest, so its last trace is the most recent durable
+  // experiment. If the backend is unavailable, fall back to the browser's last ID.
+  const preferredTraceId = String(
+    (backendHistoryAvailable
+      ? backendTraceIds[backendTraceIds.length - 1]
+      : completedIdList[completedIdList.length - 1]) || ""
+  ).trim();
+  const separatorIndex = preferredTraceId.indexOf("/");
+  const preferredScenarioName =
+    separatorIndex === -1 ? "" : preferredTraceId.slice(0, separatorIndex);
+
+  let defaultScenarioIndex = historyScenarioList.value.findIndex(
+    (scenario) => scenario.name === preferredScenarioName
+  );
+  if (defaultScenarioIndex < 0 && historyScenarioList.value.length > 0) {
+    defaultScenarioIndex = historyScenarioList.value.length - 1;
+  }
+
+  const defaultScenario =
+    defaultScenarioIndex >= 0
+      ? historyScenarioList.value[defaultScenarioIndex]
+      : null;
+
+  selectLastHistoryTrace(defaultScenario, defaultScenarioIndex);
+
+  // Select the exact preferred trace when it exists instead of merely the last
+  // item in the scenario. This keeps the dropdown and internal state aligned.
+  if (defaultScenario && preferredTraceId) {
+    const preferredTraceIndex = historyTraceList.value.findIndex(
+      (item) => String(item?.id || "").trim() === preferredTraceId
+    );
+    if (preferredTraceIndex >= 0) {
+      historyTraceCheckedIndex.value = preferredTraceIndex;
+      historyTraceChecked.value = historyTraceList.value[preferredTraceIndex];
+    }
+  }
+
+  await loadHistoryResumeOptions();
+}`;
+
+if (!historyUiS51.includes(historyBuildP51Old)) {
+  console.error("[patch-frontend] FAILED: P51 history build anchor drifted.");
+  process.exit(1);
+}
+historyUiS51 = historyUiS51.replace(historyBuildP51Old, historyBuildP51New);
+
+const playgroundKeyP51Old = `      <playgroundPage
+        :id="id"`;
+const playgroundKeyP51New = `      <playgroundPage
+        :key="id"
+        :id="id"`;
+if (!historyUiS51.includes(playgroundKeyP51Old)) {
+  console.error("[patch-frontend] FAILED: P51 PlaygroundPage key anchor drifted.");
+  process.exit(1);
+}
+historyUiS51 = historyUiS51.replace(playgroundKeyP51Old, playgroundKeyP51New);
+
+fs.writeFileSync(historyUiP51, historyUiS51);
+console.log("[patch-frontend] P51 authoritative previous-experiment list applied");
+
+const pollUiP51 = "/src/web/src/views/PlaygroundPage.vue";
+let pollUiS51 = fs.readFileSync(pollUiP51, "utf8");
+
+const pollStateP51Old = `let transitionTimer = undefined;
+const tabIndex = ref(0);`;
+const pollStateP51New = `let transitionTimer = undefined;
+let tracePollTimer = undefined;
+let tracePollDisposed = false;
+const tabIndex = ref(0);`;
+if (!pollUiS51.includes(pollStateP51Old)) {
+  console.error("[patch-frontend] FAILED: P51 trace-poll state anchor drifted.");
+  process.exit(1);
+}
+pollUiS51 = pollUiS51.replace(pollStateP51Old, pollStateP51New);
+
+const firstTraceThenP51Old = `  trace(data).then((response) => {
+    if (response && response.length > 0) {`;
+const firstTraceThenP51New = `  trace(data).then((response) => {
+    if (tracePollDisposed) return;
+    if (response && response.length > 0) {`;
+if (!pollUiS51.includes(firstTraceThenP51Old)) {
+  console.error("[patch-frontend] FAILED: P51 firstTrace response anchor drifted.");
+  process.exit(1);
+}
+pollUiS51 = pollUiS51.replace(firstTraceThenP51Old, firstTraceThenP51New);
+
+const tracePollStartP51Old = `const tracePoll = () => {
+  if (stopFlag.value) {
+    return;
+  }`;
+const tracePollStartP51New = `const tracePoll = () => {
+  if (tracePollDisposed || stopFlag.value) {
+    return;
+  }`;
+if (!pollUiS51.includes(tracePollStartP51Old)) {
+  console.error("[patch-frontend] FAILED: P51 tracePoll start anchor drifted.");
+  process.exit(1);
+}
+pollUiS51 = pollUiS51.replace(tracePollStartP51Old, tracePollStartP51New);
+
+const tracePollThenP51Old = `  trace(data).then((response) => {
+    if (response && response.length > 0) {`;
+const tracePollThenP51New = `  trace(data).then((response) => {
+    if (tracePollDisposed) return;
+    if (response && response.length > 0) {`;
+if (!pollUiS51.includes(tracePollThenP51Old)) {
+  console.error("[patch-frontend] FAILED: P51 tracePoll response anchor drifted.");
+  process.exit(1);
+}
+// first occurrence was already changed in firstTrace; replace the remaining exact occurrence.
+pollUiS51 = pollUiS51.replace(tracePollThenP51Old, tracePollThenP51New);
+
+const traceScheduleP51Old = `      setTimeout(tracePoll, 3000);`;
+const traceScheduleP51New = `      if (!tracePollDisposed) {
+        if (tracePollTimer) clearTimeout(tracePollTimer);
+        tracePollTimer = setTimeout(tracePoll, 3000);
+      }`;
+if (!pollUiS51.includes(traceScheduleP51Old)) {
+  console.error("[patch-frontend] FAILED: P51 tracePoll schedule anchor drifted.");
+  process.exit(1);
+}
+pollUiS51 = pollUiS51.replace(traceScheduleP51Old, traceScheduleP51New);
+
+const mountedP51Old = `onMounted(() => {
+  firstTrace();
+});
+
+// 在组件被卸载前移除全局点击事件监听
+onUnmounted(() => {});`;
+const mountedP51New = `onMounted(() => {
+  tracePollDisposed = false;
+  firstTrace();
+});
+
+onUnmounted(() => {
+  tracePollDisposed = true;
+  if (tracePollTimer) {
+    clearTimeout(tracePollTimer);
+    tracePollTimer = undefined;
+  }
+  if (transitionTimer) {
+    clearTimeout(transitionTimer);
+    transitionTimer = undefined;
+  }
+});`;
+if (!pollUiS51.includes(mountedP51Old)) {
+  console.error("[patch-frontend] FAILED: P51 lifecycle cleanup anchor drifted.");
+  process.exit(1);
+}
+pollUiS51 = pollUiS51.replace(mountedP51Old, mountedP51New);
+
+fs.writeFileSync(pollUiP51, pollUiS51);
+console.log("[patch-frontend] P51 trace polling cleanup applied to PlaygroundPage.vue");
