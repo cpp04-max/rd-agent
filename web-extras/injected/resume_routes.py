@@ -317,6 +317,7 @@ def resume_trace():
         "additional_loops": additional_loops,
         "all_duration": f"{duration_hours}h",
         "resume_instruction": instruction or None,
+        "resume_loop_index": int(selected["loop_index"]),
         "base_features_path": None,
     }
 
