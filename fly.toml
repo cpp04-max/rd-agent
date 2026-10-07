@@ -46,6 +46,10 @@ primary_region = 'lax'
   # Set to "false" (or remove) to get the interactive dialogs back.
   RDAGENT_AUTO_SKIP_INTERACTION = "true"
   RDAGENT_MAX_EPOCHS = "30"
+  # P49: time-budget guard is action-aware. Factor iterations are usually much
+  # faster than model training, so don't apply the old blanket 1-hour threshold.
+  RDAGENT_MIN_FACTOR_LOOP_SECONDS = "1800"
+  RDAGENT_MIN_MODEL_LOOP_SECONDS = "3600"
   # Persist CoSTEER knowledge across runs/deployments on the /data volume so
   # later loops reuse learned implementation knowledge instead of re-evolving.
   FACTOR_CoSTEER_knowledge_base_path = "/data/costeer/factor_kb.pkl"
