@@ -1232,6 +1232,7 @@ _QUANT_SIG_NEW = '''    checkout: bool | str = True,
     base_features_path: str | None = None,
     additional_loops: int | None = None,
     resume_instruction: str | None = None,
+    resume_loop_index: int | None = None,
     reset_timer_on_resume: bool = True,
     **kwargs,
 ):
@@ -1251,6 +1252,7 @@ _QUANT_LOAD_OLD = '''    if path is None:
 '''
 _QUANT_LOAD_NEW = '''    if path is None:
         quant_loop = QuantRDLoop(QUANT_PROP_SETTING)
+        _resume_incomplete_loop = False
     else:
         # A continuation gets a new budget rather than inheriting an expired timer.
         quant_loop = QuantRDLoop.load(
@@ -1259,17 +1261,42 @@ _QUANT_LOAD_NEW = '''    if path is None:
             replace_timer=not reset_timer_on_resume,
         )
 
+        # P50: start the workflow at the selected checkpoint's loop instead of
+        # rescanning internal loop 0,1,... on every resume. If the selected loop is
+        # already complete (record checkpoint), start at the next loop. If it is
+        # partial (e.g. after direct_exp_gen/coding), resume that exact loop.
+        if resume_loop_index is None:
+            _selected_loop_idx = max(quant_loop.step_idx.keys(), default=-1)
+        else:
+            _selected_loop_idx = int(resume_loop_index)
+
+        _selected_step_idx = int(quant_loop.step_idx.get(_selected_loop_idx, 0))
+        _resume_incomplete_loop = _selected_step_idx < len(quant_loop.steps)
+        _resume_start_loop_idx = (
+            _selected_loop_idx if _resume_incomplete_loop else _selected_loop_idx + 1
+        )
+        quant_loop._resume_start_loop_idx = _resume_start_loop_idx
+        logger.info(
+            f"Resume checkpoint resolved: selected_loop={_selected_loop_idx + 1}, "
+            f"selected_step_idx={_selected_step_idx}, "
+            f"resume_start_loop={_resume_start_loop_idx + 1}, "
+            f"incomplete_selected_loop={_resume_incomplete_loop}"
+        )
+
     if resume_instruction:
         quant_loop.plan["user_instruction"] = str(resume_instruction)
 
     if additional_loops is not None:
-        # LoopBase.run() restarts kickoff from loop index 0, and its loop_n counter
-        # is consumed even by already-completed loop indices. Convert "N additional"
-        # into the total kickoff span needed to reach N genuinely new loops.
-        _existing_loop_span = max(quant_loop.step_idx.keys(), default=-1) + 1
-        loop_n = _existing_loop_span + int(additional_loops)
+        # "Additional loops" means loops after the selected checkpoint. If the
+        # selected checkpoint is partial, first finish that selected loop and then
+        # run N genuinely new loops. If it is complete, run N new loops directly.
+        loop_n = int(additional_loops) + (
+            1 if path is not None and _resume_incomplete_loop else 0
+        )
         logger.info(
-            f"Resume requested: existing loop span={_existing_loop_span}, "
+            f"Resume requested: start_loop="
+            f"{getattr(quant_loop, '_resume_start_loop_idx', 0) + 1}, "
+            f"finish_selected_partial={bool(path is not None and _resume_incomplete_loop)}, "
             f"additional_loops={additional_loops}, effective loop_n={loop_n}"
         )
 
@@ -1684,6 +1711,45 @@ patch(
     _LIVE_RESULT_ROUTE_OLD,
     _LIVE_RESULT_ROUTE_NEW,
     "P48 live RESULT snapshot endpoint",
+)
+
+
+
+# ---------------------------------------------------------------- P50 true checkpoint resume start
+# Upstream LoopBase.run() always resets loop_idx=0. P42 compensated by inflating
+# loop_n and rescanning completed loops, which made a Loop 3 continuation look like
+# it restarted at Loop 1. Honor the explicit resume start index instead.
+_LOOP_RUN_RESET_OLD = '''        self.loop_idx = (
+            0  # if we rerun the loop, we should revert the loop index to 0 to make sure every loop is correctly kicked
+        )
+'''
+_LOOP_RUN_RESET_NEW = '''        self.loop_idx = int(getattr(self, "_resume_start_loop_idx", 0) or 0)
+        if self.loop_idx:
+            logger.info(
+                f"Resume workflow kickoff directly from internal loop index {self.loop_idx} "
+                f"(UI Loop {self.loop_idx + 1})"
+            )
+'''
+patch(
+    "rdagent/utils/workflow/loop.py",
+    _LOOP_RUN_RESET_OLD,
+    _LOOP_RUN_RESET_NEW,
+    "P50 start resumed workflow at selected loop",
+)
+
+_LOOP_RESUME_RESET_OLD = '''            except self.LoopResumeError as e:
+                logger.warning(f"Stop all the routines and resume loop: {e}")
+                self.loop_idx = 0
+'''
+_LOOP_RESUME_RESET_NEW = '''            except self.LoopResumeError as e:
+                logger.warning(f"Stop all the routines and resume loop: {e}")
+                self.loop_idx = int(getattr(self, "_resume_start_loop_idx", 0) or 0)
+'''
+patch(
+    "rdagent/utils/workflow/loop.py",
+    _LOOP_RESUME_RESET_OLD,
+    _LOOP_RESUME_RESET_NEW,
+    "P50 preserve selected resume start across internal resume",
 )
 
 
