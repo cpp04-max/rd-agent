@@ -1505,4 +1505,186 @@ patch(
 )
 
 
+
+# ---------------------------------------------------------------- P48 live RESULT snapshot
+# RESULT should be inspectable while a multi-loop run is still active. Build a
+# pointer-independent snapshot from both in-memory UI messages and durable FileStorage
+# so completed loop metrics/feedback show up immediately without waiting for END.
+_LIVE_RESULT_ROUTE_OLD = '''@app.route("/stdout", methods=["GET"])
+def download_stdout_file():
+'''
+_LIVE_RESULT_ROUTE_NEW = '''def _live_result_snapshot_from_messages(messages):
+    import json as _json
+
+    loops = {}
+    latest_timestamp = None
+
+    for ui_msg in messages or []:
+        if not isinstance(ui_msg, dict):
+            continue
+        tag = str(ui_msg.get("tag") or "")
+        if tag not in {
+            "research.hypothesis",
+            "feedback.metric",
+            "feedback.hypothesis_feedback",
+        }:
+            continue
+
+        loop_id = ui_msg.get("loop_id")
+        try:
+            loop_id = int(loop_id)
+        except (TypeError, ValueError):
+            continue
+        if loop_id < 0:
+            continue
+
+        row = loops.setdefault(
+            loop_id,
+            {
+                "loop_id": loop_id,
+                "researchHypothesis": None,
+                "feedbackMetric": None,
+                "feedbackHypothesis": None,
+                "updated_at": None,
+            },
+        )
+
+        timestamp = ui_msg.get("timestamp")
+        if timestamp:
+            row["updated_at"] = timestamp
+            latest_timestamp = timestamp
+
+        content = ui_msg.get("content")
+        if tag == "research.hypothesis":
+            if isinstance(content, dict):
+                row["researchHypothesis"] = content
+        elif tag == "feedback.metric":
+            metric_payload = content.get("result") if isinstance(content, dict) else None
+            if isinstance(metric_payload, str):
+                try:
+                    metric_payload = _json.loads(metric_payload)
+                except Exception:
+                    metric_payload = None
+            if isinstance(metric_payload, dict):
+                row["feedbackMetric"] = metric_payload
+        elif tag == "feedback.hypothesis_feedback":
+            if isinstance(content, dict):
+                row["feedbackHypothesis"] = content
+
+    ordered = [loops[key] for key in sorted(loops)]
+    for row in ordered:
+        row["complete"] = bool(row.get("feedbackHypothesis"))
+        row["has_metrics"] = bool(row.get("feedbackMetric"))
+    return ordered, latest_timestamp
+
+
+def _collect_live_result_messages(trace_dir: Path, trace_id: str):
+    """Read only RESULT-relevant events without mutating /trace pointers/messages."""
+    fs = FileStorage(trace_dir)
+    ws = WebStorage(port=1, path=trace_dir)
+    recovered = []
+
+    for msg in fs.iter_msg():
+        try:
+            data = ws._obj_to_json(
+                obj=msg.content,
+                tag=msg.tag,
+                id=trace_id,
+                timestamp=msg.timestamp.isoformat(),
+            )
+        except Exception:
+            data = {}
+
+        if not data:
+            data = _recover_result_event_from_trace_obj(msg, trace_id)
+        if not data:
+            continue
+
+        entries = data if isinstance(data, list) else [data]
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            ui_msg = entry.get("msg")
+            if not isinstance(ui_msg, dict):
+                continue
+            if ui_msg.get("tag") in {
+                "research.hypothesis",
+                "feedback.metric",
+                "feedback.hypothesis_feedback",
+            }:
+                recovered.append(ui_msg)
+    return recovered
+
+
+@app.route("/result/live", methods=["GET"])
+def live_result_snapshot():
+    import time as _time
+
+    trace_id = str(request.args.get("id") or "").strip().strip("/")
+    if not trace_id:
+        return jsonify({"error": "Trace ID is required"}), 400
+
+    trace_dir = (log_folder_path / trace_id).resolve()
+    root = log_folder_path.resolve()
+    try:
+        if os.path.commonpath([str(trace_dir), str(root)]) != str(root):
+            return jsonify({"error": "Invalid trace ID"}), 400
+    except ValueError:
+        return jsonify({"error": "Invalid trace ID"}), 400
+
+    if not trace_dir.exists() or not trace_dir.is_dir():
+        return jsonify({"error": "Trace not found"}), 404
+
+    task = rdagent_processes.get(str(trace_dir))
+    alive = bool(task is not None and task.is_alive())
+
+    # Primary source: durable trace. Cache briefly to avoid repeatedly unpickling a
+    # large trace when the frontend polls every few seconds.
+    disk_messages = []
+    now = _time.monotonic()
+    cache = getattr(task, "_live_result_cache", None) if task is not None else None
+    if (
+        isinstance(cache, dict)
+        and now - float(cache.get("time", 0.0)) < 2.5
+        and isinstance(cache.get("messages"), list)
+    ):
+        disk_messages = cache["messages"]
+    else:
+        try:
+            disk_messages = _collect_live_result_messages(trace_dir, str(trace_dir))
+        except Exception:
+            app.logger.exception("Failed to build live RESULT snapshot for %s", trace_dir)
+            disk_messages = []
+        if task is not None:
+            task._live_result_cache = {"time": now, "messages": disk_messages}
+
+    # Append current in-memory messages after durable messages so the newest live
+    # payload wins when both sources contain the same loop/event.
+    combined = list(disk_messages)
+    if task is not None and isinstance(task.messages, list):
+        combined.extend(task.messages)
+
+    loops, updated_at = _live_result_snapshot_from_messages(combined)
+    return jsonify(
+        {
+            "id": trace_id,
+            "alive": alive,
+            "loops": loops,
+            "loop_count": len(loops),
+            "updated_at": updated_at,
+        }
+    ), 200
+
+
+@app.route("/stdout", methods=["GET"])
+def download_stdout_file():
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _LIVE_RESULT_ROUTE_OLD,
+    _LIVE_RESULT_ROUTE_NEW,
+    "P48 live RESULT snapshot endpoint",
+)
+
+
 print("All rdagent patches applied.", flush=True)
