@@ -18,6 +18,7 @@ RUN git init -q /src \
  && git -C /src checkout -q FETCH_HEAD
 # Deep-link support: /#/Playground?trace=<id> opens a specific run in the dashboard
 COPY web-extras/patch-frontend.js /tmp/patch-frontend.js
+COPY web-extras/patch-history-p56.js /tmp/patch-history-p56.js
 RUN node /tmp/patch-frontend.js
 WORKDIR /src/web
 RUN npm install --legacy-peer-deps --no-audit --no-fund \
