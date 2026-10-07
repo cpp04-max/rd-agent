@@ -3132,3 +3132,279 @@ pollUiS51 = pollUiS51.replace(mountedP51Old, mountedP51New);
 
 fs.writeFileSync(pollUiP51, pollUiS51);
 console.log("[patch-frontend] P51 trace polling cleanup applied to PlaygroundPage.vue");
+
+
+// ------------------------- P52: make Previous Experiments open immediately -------------------------
+const historyFastP52 = "/src/web/src/views/Playground.vue";
+let historyFastS52 = fs.readFileSync(historyFastP52, "utf8");
+
+const historyStateP52Old = `const historyResumeInstruction = ref("");
+const historyResumeLoopOptions = computed(() =>`;
+const historyStateP52New = `const historyResumeInstruction = ref("");
+const historyListLoading = ref(false);
+const historyListLoaded = ref(false);
+const historyListError = ref("");
+const historyResumeLoopOptions = computed(() =>`;
+if (!historyFastS52.includes(historyStateP52Old)) {
+  console.error("[patch-frontend] FAILED: P52 history loading-state anchor drifted.");
+  process.exit(1);
+}
+historyFastS52 = historyFastS52.replace(historyStateP52Old, historyStateP52New);
+
+const historyPanelP52Old = `          <div class="history-select-row">
+            <div class="history-select-item">`;
+const historyPanelP52New = `          <div v-if="historyListLoading" class="history-resume-status history-list-loading">
+            Loading experiments…
+          </div>
+          <div v-else-if="historyListError" class="history-resume-status error">
+            {{ historyListError }}
+          </div>
+
+          <div class="history-select-row">
+            <div class="history-select-item">`;
+if (!historyFastS52.includes(historyPanelP52Old)) {
+  console.error("[patch-frontend] FAILED: P52 history panel loading anchor drifted.");
+  process.exit(1);
+}
+historyFastS52 = historyFastS52.replace(historyPanelP52Old, historyPanelP52New);
+
+const historyBuildP52Old = `async function buildHistoryTraceList() {
+  const groupedTraceMap = new Map();
+  const completedIdList = getCompletedIdList();
+
+  // The backend /traces endpoint reflects what actually exists on persistent
+  // storage. localStorage is only a fallback for a temporary backend failure.
+  let backendTraceIds = [];
+  let backendHistoryAvailable = false;
+  try {
+    const response = await getHistoryTraceIds();
+    backendHistoryAvailable = true;
+    backendTraceIds = Array.isArray(response)
+      ? response.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+  } catch {
+    backendHistoryAvailable = false;
+  }
+
+  const traceIdList = backendHistoryAvailable
+    ? [...new Set(backendTraceIds)]
+    : [...new Set(completedIdList)];
+
+  // Prune browser-only stale IDs after trace cleanup so deleted experiments do
+  // not remain selectable forever.
+  if (backendHistoryAvailable) {
+    const backendSet = new Set(backendTraceIds);
+    const prunedCompletedIds = completedIdList.filter((traceId) =>
+      backendSet.has(String(traceId || "").trim())
+    );
+    if (prunedCompletedIds.length !== completedIdList.length) {
+      localStorage.setItem(
+        completedTraceStorageKey,
+        JSON.stringify(prunedCompletedIds)
+      );
+    }
+  }
+
+  traceIdList.forEach((traceId) => appendTraceId(groupedTraceMap, traceId));
+
+  historyScenarioList.value = Array.from(groupedTraceMap.entries()).map(
+    ([scenario, traceMap]) => ({
+      name: scenario,
+      children: Array.from(traceMap.values()),
+    })
+  );
+
+  // Backend returns oldest -> newest, so its last trace is the most recent durable
+  // experiment. If the backend is unavailable, fall back to the browser's last ID.
+  const preferredTraceId = String(
+    (backendHistoryAvailable
+      ? backendTraceIds[backendTraceIds.length - 1]
+      : completedIdList[completedIdList.length - 1]) || ""
+  ).trim();
+  const separatorIndex = preferredTraceId.indexOf("/");
+  const preferredScenarioName =
+    separatorIndex === -1 ? "" : preferredTraceId.slice(0, separatorIndex);
+
+  let defaultScenarioIndex = historyScenarioList.value.findIndex(
+    (scenario) => scenario.name === preferredScenarioName
+  );
+  if (defaultScenarioIndex < 0 && historyScenarioList.value.length > 0) {
+    defaultScenarioIndex = historyScenarioList.value.length - 1;
+  }
+
+  const defaultScenario =
+    defaultScenarioIndex >= 0
+      ? historyScenarioList.value[defaultScenarioIndex]
+      : null;
+
+  selectLastHistoryTrace(defaultScenario, defaultScenarioIndex);
+
+  // Select the exact preferred trace when it exists instead of merely the last
+  // item in the scenario. This keeps the dropdown and internal state aligned.
+  if (defaultScenario && preferredTraceId) {
+    const preferredTraceIndex = historyTraceList.value.findIndex(
+      (item) => String(item?.id || "").trim() === preferredTraceId
+    );
+    if (preferredTraceIndex >= 0) {
+      historyTraceCheckedIndex.value = preferredTraceIndex;
+      historyTraceChecked.value = historyTraceList.value[preferredTraceIndex];
+    }
+  }
+
+  await loadHistoryResumeOptions();
+}`;
+
+const historyBuildP52New = `async function buildHistoryTraceList({
+  loadResume = true,
+  force = false,
+} = {}) {
+  // Keep the already-loaded list hot. Opening History should never block on a
+  // second /traces call just because the user clicked the card again.
+  if (historyListLoaded.value && !force) {
+    if (loadResume) void loadHistoryResumeOptions();
+    return;
+  }
+
+  historyListLoading.value = true;
+  historyListError.value = "";
+  const groupedTraceMap = new Map();
+  const completedIdList = getCompletedIdList();
+
+  let backendTraceIds = [];
+  let backendHistoryAvailable = false;
+  try {
+    const response = await getHistoryTraceIds();
+    backendHistoryAvailable = true;
+    backendTraceIds = Array.isArray(response)
+      ? response.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+  } catch (error) {
+    backendHistoryAvailable = false;
+    if (!completedIdList.length) {
+      historyListError.value =
+        error?.response?.data?.error ||
+        error?.message ||
+        "Failed to load previous experiments.";
+    }
+  }
+
+  const traceIdList = backendHistoryAvailable
+    ? [...new Set(backendTraceIds)]
+    : [...new Set(completedIdList)];
+
+  if (backendHistoryAvailable) {
+    const backendSet = new Set(backendTraceIds);
+    const prunedCompletedIds = completedIdList.filter((traceId) =>
+      backendSet.has(String(traceId || "").trim())
+    );
+    if (prunedCompletedIds.length !== completedIdList.length) {
+      localStorage.setItem(
+        completedTraceStorageKey,
+        JSON.stringify(prunedCompletedIds)
+      );
+    }
+  }
+
+  traceIdList.forEach((traceId) => appendTraceId(groupedTraceMap, traceId));
+
+  historyScenarioList.value = Array.from(groupedTraceMap.entries()).map(
+    ([scenario, traceMap]) => ({
+      name: scenario,
+      children: Array.from(traceMap.values()),
+    })
+  );
+
+  const preferredTraceId = String(
+    (backendHistoryAvailable
+      ? backendTraceIds[backendTraceIds.length - 1]
+      : completedIdList[completedIdList.length - 1]) || ""
+  ).trim();
+  const separatorIndex = preferredTraceId.indexOf("/");
+  const preferredScenarioName =
+    separatorIndex === -1 ? "" : preferredTraceId.slice(0, separatorIndex);
+
+  let defaultScenarioIndex = historyScenarioList.value.findIndex(
+    (scenario) => scenario.name === preferredScenarioName
+  );
+  if (defaultScenarioIndex < 0 && historyScenarioList.value.length > 0) {
+    defaultScenarioIndex = historyScenarioList.value.length - 1;
+  }
+
+  const defaultScenario =
+    defaultScenarioIndex >= 0
+      ? historyScenarioList.value[defaultScenarioIndex]
+      : null;
+
+  selectLastHistoryTrace(defaultScenario, defaultScenarioIndex);
+
+  if (defaultScenario && preferredTraceId) {
+    const preferredTraceIndex = historyTraceList.value.findIndex(
+      (item) => String(item?.id || "").trim() === preferredTraceId
+    );
+    if (preferredTraceIndex >= 0) {
+      historyTraceCheckedIndex.value = preferredTraceIndex;
+      historyTraceChecked.value = historyTraceList.value[preferredTraceIndex];
+    }
+  }
+
+  historyListLoaded.value = true;
+  historyListLoading.value = false;
+
+  // Resume checkpoint inspection can unpickle durable sessions and is much more
+  // expensive than listing names. Never make history-panel rendering wait for it.
+  if (loadResume) void loadHistoryResumeOptions();
+}`;
+if (!historyFastS52.includes(historyBuildP52Old)) {
+  console.error("[patch-frontend] FAILED: P52 history build anchor drifted.");
+  process.exit(1);
+}
+historyFastS52 = historyFastS52.replace(historyBuildP52Old, historyBuildP52New);
+
+const openHistoryP52Old = `const openHistoryPanel = async () => {
+  await buildHistoryTraceList();
+  showPanel.value = 3;
+  showPlayground.value = false;
+};`;
+const openHistoryP52New = `const openHistoryPanel = () => {
+  // React to the click first. Network/disk work happens after the panel is visible.
+  showPanel.value = 3;
+  showPlayground.value = false;
+  void buildHistoryTraceList({ loadResume: true });
+};`;
+if (!historyFastS52.includes(openHistoryP52Old)) {
+  console.error("[patch-frontend] FAILED: P52 openHistoryPanel anchor drifted.");
+  process.exit(1);
+}
+historyFastS52 = historyFastS52.replace(openHistoryP52Old, openHistoryP52New);
+
+const mountedHistoryP52Old = `onMounted(() => {
+  void buildHistoryTraceList();
+  const deepTrace = String(route.query.trace || "").trim();`;
+const mountedHistoryP52New = `onMounted(() => {
+  // Warm only the cheap experiment-name list. Resume checkpoint details are lazy.
+  void buildHistoryTraceList({ loadResume: false });
+  const deepTrace = String(route.query.trace || "").trim();`;
+if (!historyFastS52.includes(mountedHistoryP52Old)) {
+  console.error("[patch-frontend] FAILED: P52 history prefetch anchor drifted.");
+  process.exit(1);
+}
+historyFastS52 = historyFastS52.replace(mountedHistoryP52Old, mountedHistoryP52New);
+
+const historyStyleP52Anchor = `.history-resume-status.error {
+  color: #b42318;
+}`;
+const historyStyleP52New = `.history-resume-status.error {
+  color: #b42318;
+}
+
+.history-list-loading {
+  margin-bottom: 0.8em;
+}`;
+if (!historyFastS52.includes(historyStyleP52Anchor)) {
+  console.error("[patch-frontend] FAILED: P52 history loading style anchor drifted.");
+  process.exit(1);
+}
+historyFastS52 = historyFastS52.replace(historyStyleP52Anchor, historyStyleP52New);
+
+fs.writeFileSync(historyFastP52, historyFastS52);
+console.log("[patch-frontend] P52 immediate Previous Experiments opening applied");
