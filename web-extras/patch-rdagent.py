@@ -1753,4 +1753,102 @@ patch(
 )
 
 
+
+# ---------------------------------------------------------------- P51 history replay/list correctness
+# Historical traces are durable files, so the server is authoritative for whether an
+# experiment exists. Also make replayed traces immediately terminal when no live
+# process owns them; the old 30-minute heuristic could make a completed historical
+# run look "still running" after a deploy.
+_HISTORY_END_OLD = '''    now = datetime.now(timezone.utc)
+    if last_timestamp and (now - last_timestamp).total_seconds() > 1800:
+        task.messages.append(
+            {
+                "tag": "END",
+                "timestamp": now.isoformat(),
+                "content": {"error_msg": "Trace session has ended.", "end_code": 0},
+            }
+        )
+'''
+_HISTORY_END_NEW = '''    now = datetime.now(timezone.utc)
+    # A replayed trace with no live process is historical/completed regardless of
+    # how recent its last pickle timestamp is. The old 30-minute age heuristic left
+    # recently completed traces looking active after a server restart/deploy.
+    _historical_or_finished = task.process is None or not task.is_alive()
+    if (
+        last_timestamp
+        and _historical_or_finished
+        and (not task.messages or task.messages[-1].get("tag") != "END")
+    ):
+        task.messages.append(
+            {
+                "tag": "END",
+                "timestamp": now.isoformat(),
+                "content": {"error_msg": "Trace session has ended.", "end_code": 0},
+            }
+        )
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _HISTORY_END_OLD,
+    _HISTORY_END_NEW,
+    "P51 mark replayed historical traces completed immediately",
+)
+
+_HISTORY_LIST_OLD = '''def _collect_existing_trace_ids(trace_root: Path) -> list[str]:
+    """Return trace ids that should be visible in the UI history panel."""
+
+    if not trace_root.exists():
+        return []
+
+    trace_ids: list[str] = []
+    for trace_dir in sorted(trace_root.glob("*/*"), key=lambda p: str(p)):
+        if not trace_dir.is_dir():
+            continue
+        if "uploads" in trace_dir.relative_to(trace_root).parts:
+            continue
+        if not any(trace_dir.rglob("*.pkl")):
+            continue
+
+        trace_ids.append(trace_dir.relative_to(trace_root).as_posix())
+
+    return trace_ids
+'''
+_HISTORY_LIST_NEW = '''def _collect_existing_trace_ids(trace_root: Path) -> list[str]:
+    """Return durable trace ids in oldest -> newest activity order."""
+
+    if not trace_root.exists():
+        return []
+
+    trace_records = []
+    for trace_dir in trace_root.glob("*/*"):
+        if not trace_dir.is_dir():
+            continue
+        if "uploads" in trace_dir.relative_to(trace_root).parts:
+            continue
+
+        pickle_files = list(trace_dir.rglob("*.pkl"))
+        if not pickle_files:
+            continue
+
+        try:
+            latest_mtime = max(file.stat().st_mtime for file in pickle_files)
+        except OSError:
+            latest_mtime = trace_dir.stat().st_mtime
+
+        trace_records.append(
+            (latest_mtime, trace_dir.relative_to(trace_root).as_posix())
+        )
+
+    # Frontend selects the last entry as the default, so return oldest -> newest.
+    trace_records.sort(key=lambda item: (item[0], item[1]))
+    return [trace_id for _, trace_id in trace_records]
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _HISTORY_LIST_OLD,
+    _HISTORY_LIST_NEW,
+    "P51 make durable history list authoritative and chronological",
+)
+
+
 print("All rdagent patches applied.", flush=True)
