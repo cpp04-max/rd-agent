@@ -3504,3 +3504,118 @@ resumeProgressS53 = resumeProgressS53.replace(pollResponseP53Old, pollResponseP5
 
 fs.writeFileSync(resumeProgressP53, resumeProgressS53);
 console.log("[patch-frontend] P53 resume-aware progress/loop rail applied");
+
+
+// ------------------------- P54: Result tab owns the remaining viewport and scrolls fully -------------------------
+const resultScrollPgP54 = "/src/web/src/views/PlaygroundPage.vue";
+let resultScrollPgS54 = fs.readFileSync(resultScrollPgP54, "utf8");
+
+const mainContentP54Old = '<div class="main-content">';
+const mainContentP54New =
+  '<div class="main-content" :class="{ \'result-layout-active\': tabIndex == 1 }">';
+if (
+  !resultScrollPgS54.includes(mainContentP54Old) ||
+  resultScrollPgS54.indexOf(mainContentP54Old) !==
+    resultScrollPgS54.lastIndexOf(mainContentP54Old)
+) {
+  console.error("[patch-frontend] FAILED: P54 main-content anchor drifted.");
+  process.exit(1);
+}
+resultScrollPgS54 = resultScrollPgS54.replace(
+  mainContentP54Old,
+  mainContentP54New
+);
+
+const resultPaneP54Old = '<div v-show="tabIndex == 1">';
+const resultPaneP54New =
+  '<div v-show="tabIndex == 1" class="result-tab-pane">';
+if (!resultScrollPgS54.includes(resultPaneP54Old)) {
+  console.error("[patch-frontend] FAILED: P54 result-pane anchor drifted.");
+  process.exit(1);
+}
+resultScrollPgS54 = resultScrollPgS54.replace(
+  resultPaneP54Old,
+  resultPaneP54New
+);
+
+resultScrollPgS54 += `
+<style scoped>
+/*
+ * RESULT is different from PROCESS: Live activity + top tabs consume variable
+ * vertical space, so the result pane must receive the remaining height rather
+ * than relying on an old viewport-height subtraction.
+ */
+.main-content.result-layout-active {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.main-content.result-layout-active > .live-activity,
+.main-content.result-layout-active > .tab-title {
+  flex: 0 0 auto;
+}
+
+.main-content.result-layout-active > .result-tab-pane {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+</style>
+`;
+
+fs.writeFileSync(resultScrollPgP54, resultScrollPgS54);
+console.log("[patch-frontend] P54 Result-tab parent flex layout applied");
+
+const resultScrollP54 = "/src/web/src/views/ResultPage.vue";
+let resultScrollS54 = fs.readFileSync(resultScrollP54, "utf8");
+
+resultScrollS54 += `
+<style scoped>
+/*
+ * Keep exactly one vertical scrollbar for RESULT. The old .bg-content used
+ * height: calc(100vh - 13.95em), which became too tall after Live activity was
+ * introduced and was then clipped by PlaygroundPage's overflow:hidden parent.
+ */
+.result-component {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.result-component .download-btn {
+  flex: 0 0 auto;
+}
+
+.result-component .bg-content {
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scroll-behavior: smooth;
+  padding-bottom: 2.75em;
+}
+
+.result-component .result-content {
+  min-height: min-content;
+  padding-bottom: 1.5em;
+}
+
+.result-component .bg-content::-webkit-scrollbar {
+  width: 10px;
+}
+
+.result-component .bg-content::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+}
+</style>
+`;
+
+fs.writeFileSync(resultScrollP54, resultScrollS54);
+console.log("[patch-frontend] P54 full-height RESULT scrolling applied");
