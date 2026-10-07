@@ -48,12 +48,8 @@ def _resume_checkpoint_records(trace_dir: Path):
     return records
 
 
-def _resume_execution_failure_reason(checkpoint_path: Path):
-    """Best-effort classification of a persisted loop as an execution failure.
-
-    New P46 checkpoints carry _execution_failure_pending. Older P42/P43 record
-    checkpoints can still be classified from their latest feedback text.
-    """
+def _resume_failure_state(checkpoint_path: Path):
+    """Load the persisted loop and extract failure text + best retry checkpoint."""
     try:
         import pickle as _pickle
 
@@ -61,54 +57,96 @@ def _resume_execution_failure_reason(checkpoint_path: Path):
             state = _pickle.load(_fh)
 
         pending = getattr(state, "_execution_failure_pending", None)
+        explicit_retry = getattr(state, "_execution_failure_retry_from", None)
+
+        step_idx = getattr(state, "step_idx", {}) or {}
+        loop_index = max(step_idx.keys(), default=-1)
+        prev_out_all = getattr(state, "loop_prev_out", {}) or {}
+        prev_out = prev_out_all.get(loop_index, {}) if loop_index >= 0 else {}
+        exception_key = getattr(state, "EXCEPTION_KEY", "_EXCEPTION")
+        step_exception = prev_out.get(exception_key) if isinstance(prev_out, dict) else None
+
+        pieces = []
         if pending:
-            return str(pending)
+            pieces.append(pending)
+        if step_exception:
+            pieces.append(step_exception)
 
         trace = getattr(state, "trace", None)
         hist = getattr(trace, "hist", None) or []
-        if not hist:
-            return None
-        feedback = hist[-1][1]
-        pieces = [
-            getattr(feedback, "reason", None),
-            getattr(feedback, "observations", None),
-            getattr(feedback, "exception", None),
-        ]
+        if hist:
+            feedback = hist[-1][1]
+            pieces.extend(
+                [
+                    getattr(feedback, "reason", None),
+                    getattr(feedback, "observations", None),
+                    getattr(feedback, "exception", None),
+                ]
+            )
+
         text = "\n".join(str(item) for item in pieces if item)
         lower = text.lower()
-        markers = (
-            "failed to run this experiment",
-            "qrun_exit_code=",
-            "no result file found",
-            "expected output file not found",
-            "all tasks are failed",
-            "filenotfounderror",
-            "process was killed",
-            "\nkilled",
-            "qrun timed out",
-            "running time exceeds",
-        )
-        if any(marker in lower for marker in markers) or (
-            "failed to run " in lower and " model, because " in lower
-        ):
-            if "killed" in lower or "qrun_exit_code=137" in lower or "qrun_exit_code=-9" in lower:
-                return (
-                    "Execution failed: Qlib was killed before producing a complete "
-                    "backtest result; retry from the coding checkpoint after checking memory."
-                )
-            if (
-                "all tasks are failed" in lower
-                or "expected output file not found" in lower
-                or "filenotfounderror" in lower
-            ):
-                return (
-                    "Execution failed: the generated implementation produced no valid "
-                    "output; retry this loop from the coding checkpoint."
-                )
-            return "Execution failed: retry this loop from the coding checkpoint."
+
+        retry_step = explicit_retry if explicit_retry in {"direct_exp_gen", "coding"} else None
+        if retry_step is None and step_exception and isinstance(prev_out, dict):
+            # coding=None means the coder itself failed and must be rerun from the
+            # durable direct_exp_gen checkpoint. If coding exists but running did
+            # not complete, reuse the code and rerun from the coding checkpoint.
+            if "coding" in prev_out and prev_out.get("coding") is None:
+                retry_step = "direct_exp_gen"
+            elif "coding" in prev_out:
+                retry_step = "coding"
+
+        return state, text, lower, retry_step
     except Exception:
+        return None, "", "", None
+
+
+def _resume_execution_failure_reason(checkpoint_path: Path):
+    """Best-effort classification of completed OR partial execution failures."""
+    _state, text, lower, _retry_step = _resume_failure_state(checkpoint_path)
+    if not text:
         return None
-    return None
+
+    markers = (
+        "failed to run this experiment",
+        "qrun_exit_code=",
+        "no result file found",
+        "expected output file not found",
+        "all tasks are failed",
+        "filenotfounderror",
+        "process was killed",
+        "\nkilled",
+        "qrun timed out",
+        "running time exceeds",
+    )
+    if not (
+        any(marker in lower for marker in markers)
+        or ("failed to run " in lower and " model, because " in lower)
+    ):
+        return None
+
+    if "killed" in lower or "qrun_exit_code=137" in lower or "qrun_exit_code=-9" in lower:
+        return (
+            "Execution failed: Qlib was killed before producing a complete "
+            "backtest result; retry from the coding checkpoint after checking memory."
+        )
+    if (
+        "all tasks are failed" in lower
+        or "expected output file not found" in lower
+        or "filenotfounderror" in lower
+    ):
+        return (
+            "Execution failed: the generated implementation produced no valid output; "
+            "retry the same loop from the last valid pre-failure checkpoint."
+        )
+    return "Execution failed: retry this loop from the coding checkpoint."
+
+
+def _resume_execution_failure_retry_step(checkpoint_path: Path):
+    """Return the durable step after which the failed work should be retried."""
+    _state, _text, _lower, retry_step = _resume_failure_state(checkpoint_path)
+    return retry_step or "coding"
 
 
 @app.route("/resume/options", methods=["GET"])
@@ -150,18 +188,24 @@ def resume_options():
             (item for item in candidates if item["step_name"] == "record"),
             None,
         )
-        execution_failure_reason = (
-            _resume_execution_failure_reason(Path(completed["path"]))
-            if completed is not None
-            else None
+        # Detect failures from either a completed record checkpoint or the
+        # latest partial checkpoint. This also recovers traces that crashed while
+        # logging feedback before a record checkpoint could be written.
+        failure_probe = completed or candidates[-1]
+        execution_failure_reason = _resume_execution_failure_reason(
+            Path(failure_probe["path"])
         )
         retry_checkpoint = None
         if execution_failure_reason:
-            # "after coding" means the generated hypothesis/code is durable but
-            # running has not yet succeeded. Resuming here reruns the SAME experiment
-            # instead of asking the LLM for another hypothesis.
+            retry_step = _resume_execution_failure_retry_step(
+                Path(failure_probe["path"])
+            )
             retry_checkpoint = next(
-                (item for item in reversed(candidates) if item["step_name"] == "coding"),
+                (
+                    item
+                    for item in reversed(candidates)
+                    if item["step_name"] == retry_step
+                ),
                 None,
             )
 
