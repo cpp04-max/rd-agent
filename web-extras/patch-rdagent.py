@@ -2177,4 +2177,33 @@ patch(
 )
 
 
+
+# P55b remember which durable checkpoint should be used for an execution retry.
+_P46_FAILURE_STAGE_OLD = '''            if _is_execution_failure(e):
+                _reason = _execution_failure_reason(e)
+                self._execution_failure_pending = _reason
+                feedback = HypothesisFeedback(
+'''
+_P46_FAILURE_STAGE_NEW = '''            if _is_execution_failure(e):
+                _reason = _execution_failure_reason(e)
+                self._execution_failure_pending = _reason
+                # If coding itself failed, the "after coding" checkpoint contains
+                # coding=None and would immediately jump to feedback. Resume from
+                # direct_exp_gen so the SAME hypothesis/experiment reruns coding.
+                # If running failed, the coding output is valid and should be reused.
+                self._execution_failure_retry_from = (
+                    "direct_exp_gen"
+                    if prev_out.get("coding") is None
+                    else "coding"
+                )
+                feedback = HypothesisFeedback(
+'''
+patch(
+    "rdagent/app/qlib_rd_loop/quant.py",
+    _P46_FAILURE_STAGE_OLD,
+    _P46_FAILURE_STAGE_NEW,
+    "P55 remember coding-vs-running retry checkpoint",
+)
+
+
 print("All rdagent patches applied.", flush=True)
