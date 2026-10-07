@@ -3667,3 +3667,180 @@ require("./patch-history-p56.js");
 
 // P57 reactive Result -> continuation route handoff
 require("./patch-route-p57.js");
+
+
+// ------------------------- P58: explicit terminal execution-failure RESULT card -------------------------
+// /result/live can recover a terminal runtime failure from stdout even when the
+// structured feedback event was never persisted. Surface that state directly instead
+// of leaving RESULT visually empty.
+const resultP58 = "/src/web/src/views/ResultPage.vue";
+let resultS58 = fs.readFileSync(resultP58, "utf8");
+
+const stateP58Old =
+  'const liveResultLastUpdated = ref("");\nlet liveResultTimer = null;';
+const stateP58New =
+  'const liveResultLastUpdated = ref("");\n' +
+  'const liveResultFailure = ref(null);\n' +
+  'let liveResultTimer = null;';
+if (!resultS58.includes(stateP58Old)) {
+  console.error("[patch-frontend] FAILED: P58 live failure state anchor drifted.");
+  process.exit(1);
+}
+resultS58 = resultS58.replace(stateP58Old, stateP58New);
+
+const pollP58Old =
+  '    liveResultAlive.value = Boolean(snapshot?.alive);\n' +
+  '    liveResultLastUpdated.value = snapshot?.updated_at || "";\n' +
+  '    updateData();';
+const pollP58New =
+  '    liveResultAlive.value = Boolean(snapshot?.alive);\n' +
+  '    liveResultLastUpdated.value = snapshot?.updated_at || "";\n' +
+  '    liveResultFailure.value = snapshot?.execution_failure || null;\n' +
+  '    updateData();';
+if (!resultS58.includes(pollP58Old)) {
+  console.error("[patch-frontend] FAILED: P58 live polling anchor drifted.");
+  process.exit(1);
+}
+resultS58 = resultS58.replace(pollP58Old, pollP58New);
+
+const resetP58Old =
+  '    liveResultRows.value = [];\n' +
+  '    liveResultAlive.value = false;\n' +
+  '    liveResultLastUpdated.value = "";\n' +
+  '    pollLiveResults();';
+const resetP58New =
+  '    liveResultRows.value = [];\n' +
+  '    liveResultAlive.value = false;\n' +
+  '    liveResultLastUpdated.value = "";\n' +
+  '    liveResultFailure.value = null;\n' +
+  '    pollLiveResults();';
+if (!resultS58.includes(resetP58Old)) {
+  console.error("[patch-frontend] FAILED: P58 trace-reset anchor drifted.");
+  process.exit(1);
+}
+resultS58 = resultS58.replace(resetP58Old, resetP58New);
+
+const emptyConditionP58Old =
+  'v-if="tableData.length === 0 && Object.keys(metricData || {}).length === 0"';
+const emptyConditionP58New =
+  'v-if="tableData.length === 0 && Object.keys(metricData || {}).length === 0 && !liveResultFailure"';
+if (!resultS58.includes(emptyConditionP58Old)) {
+  console.error("[patch-frontend] FAILED: P58 empty-state condition anchor drifted.");
+  process.exit(1);
+}
+resultS58 = resultS58.replace(emptyConditionP58Old, emptyConditionP58New);
+
+const cardP58Anchor = '        <h2>Metrics</h2>';
+const cardP58New = [
+  '        <div v-if="liveResultFailure" class="execution-failure-summary">',
+  '          <div class="execution-failure-summary-head">',
+  '            <strong>Execution Failed</strong>',
+  '            <span>{{ liveResultFailure.stage || "Experiment execution" }}</span>',
+  '          </div>',
+  '          <p>{{ liveResultFailure.reason }}</p>',
+  '          <div class="execution-failure-summary-grid">',
+  '            <div>',
+  '              <span>Scientific result</span>',
+  '              <strong>{{ liveResultFailure.scientific_result || "Not evaluated" }}</strong>',
+  '            </div>',
+  '            <div>',
+  '              <span>Metrics</span>',
+  '              <strong>No metrics — backtest did not complete</strong>',
+  '            </div>',
+  '          </div>',
+  '          <p class="execution-failure-summary-next">',
+  '            <strong>Next action:</strong>',
+  '            {{ liveResultFailure.retry || "Retry from the last valid coding checkpoint." }}',
+  '          </p>',
+  '        </div>',
+  '        <h2>Metrics</h2>',
+].join("\n");
+if (!resultS58.includes(cardP58Anchor)) {
+  console.error("[patch-frontend] FAILED: P58 Metrics card anchor drifted.");
+  process.exit(1);
+}
+resultS58 = resultS58.replace(cardP58Anchor, cardP58New);
+
+const styleEndP58 = "</style>";
+const styleP58 = [
+  "",
+  ".execution-failure-summary {",
+  "  margin: 0 0 1.1em;",
+  "  padding: 1em 1.1em;",
+  "  border: 1px solid #efc9c9;",
+  "  border-radius: 12px;",
+  "  background: #fff8f8;",
+  "  color: #4b5565;",
+  "}",
+  "",
+  ".execution-failure-summary-head {",
+  "  display: flex;",
+  "  align-items: baseline;",
+  "  gap: 0.7em;",
+  "  flex-wrap: wrap;",
+  "  margin-bottom: 0.55em;",
+  "}",
+  "",
+  ".execution-failure-summary-head strong {",
+  "  color: #a73535;",
+  "  font-size: 1.05em;",
+  "}",
+  "",
+  ".execution-failure-summary-head span {",
+  "  color: #7a8495;",
+  "  font-size: 0.84em;",
+  "}",
+  "",
+  ".execution-failure-summary p {",
+  "  margin: 0.5em 0;",
+  "  line-height: 1.55;",
+  "}",
+  "",
+  ".execution-failure-summary-grid {",
+  "  display: grid;",
+  "  grid-template-columns: repeat(2, minmax(0, 1fr));",
+  "  gap: 0.75em;",
+  "  margin: 0.8em 0;",
+  "}",
+  "",
+  ".execution-failure-summary-grid > div {",
+  "  padding: 0.7em 0.8em;",
+  "  border-radius: 9px;",
+  "  background: #fff;",
+  "  border: 1px solid #f1dddd;",
+  "}",
+  "",
+  ".execution-failure-summary-grid span,",
+  ".execution-failure-summary-grid strong {",
+  "  display: block;",
+  "}",
+  "",
+  ".execution-failure-summary-grid span {",
+  "  margin-bottom: 0.25em;",
+  "  color: #8a93a2;",
+  "  font-size: 0.78em;",
+  "}",
+  "",
+  ".execution-failure-summary-next {",
+  "  color: #5b6472;",
+  "}",
+  "",
+  "@media (max-width: 760px) {",
+  "  .execution-failure-summary-grid {",
+  "    grid-template-columns: 1fr;",
+  "  }",
+  "}",
+  "",
+].join("\n");
+const styleIndexP58 = resultS58.lastIndexOf(styleEndP58);
+if (styleIndexP58 === -1) {
+  console.error("[patch-frontend] FAILED: P58 style end missing.");
+  process.exit(1);
+}
+resultS58 =
+  resultS58.slice(0, styleIndexP58) +
+  styleP58 +
+  resultS58.slice(styleIndexP58);
+
+fs.writeFileSync(resultP58, resultS58);
+console.log("[patch-frontend] P58 terminal execution-failure RESULT card applied");

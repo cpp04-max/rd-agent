@@ -2206,4 +2206,205 @@ patch(
 )
 
 
+
+# ---------------------------------------------------------------- P58 resume workspace repair + terminal failure hardening
+# Durable loop checkpoints survive Fly redeploys under /data, while generated Qlib
+# workspaces live in the image filesystem. Rehydrate every file-backed workspace from
+# its persisted file_dict immediately before qrun so a continued checkpoint never
+# points at an empty/recreated workspace directory.
+_P58_WORKSPACE_REHYDRATE_OLD = '''        _qlib_run = qtde.run(
+            local_path=str(self.workspace_path),
+            entry=f"qrun {qlib_config_name}",
+            env=run_env,
+        )
+'''
+_P58_WORKSPACE_REHYDRATE_NEW = '''        # P58: a durable checkpoint can outlive its ephemeral workspace after a
+        # Fly redeploy. file_dict is pickled with the checkpoint, so replay it before
+        # qrun instead of assuming workspace_path still contains the template files.
+        self.prepare()
+        self.inject_files(**self.file_dict)
+        _config_path = self.workspace_path / qlib_config_name
+        if not _config_path.exists():
+            _status = (
+                "[RD-Agent execution status] missing_qrun_config="
+                f"{qlib_config_name} workspace={self.workspace_path}"
+            )
+            logger.error(_status)
+            logger.log_object(_status, tag="Qlib_execute_log")
+            return None, _status
+
+        _qlib_run = qtde.run(
+            local_path=str(self.workspace_path),
+            entry=f"qrun {qlib_config_name}",
+            env=run_env,
+        )
+'''
+patch(
+    "rdagent/scenarios/qlib/experiment/workspace.py",
+    _P58_WORKSPACE_REHYDRATE_OLD,
+    _P58_WORKSPACE_REHYDRATE_NEW,
+    "P58 rehydrate durable Qlib workspace before qrun",
+)
+
+# The workflow kickoff coroutine can race one loop ahead of the worker coroutine.
+# A post-record termination check alone can therefore allow the next direct_exp_gen
+# to start even after feedback already classified the prior loop as an execution
+# failure. Guard the generator itself so no speculative LLM work starts.
+_P58_DIRECT_GUARD_OLD = '''    async def direct_exp_gen(self, prev_out: dict[str, Any]):
+        while True:
+'''
+_P58_DIRECT_GUARD_NEW = '''    async def direct_exp_gen(self, prev_out: dict[str, Any]):
+        if getattr(self, "_execution_failure_pending", None):
+            raise self.LoopTerminationError("Execution failure requires retry/repair")
+        while True:
+            if getattr(self, "_execution_failure_pending", None):
+                raise self.LoopTerminationError("Execution failure requires retry/repair")
+'''
+patch(
+    "rdagent/app/qlib_rd_loop/quant.py",
+    _P58_DIRECT_GUARD_OLD,
+    _P58_DIRECT_GUARD_NEW,
+    "P58 block speculative next hypothesis after execution failure",
+)
+
+# RESULT must still explain a terminal execution failure if WebStorage never persisted
+# the structured feedback event. Derive a small, secret-free failure summary from the
+# run stdout and expose it alongside /result/live's structured loop rows.
+_P58_LIVE_FAILURE_ROUTE_OLD = '''@app.route("/result/live", methods=["GET"])
+def live_result_snapshot():
+'''
+_P58_LIVE_FAILURE_ROUTE_NEW = '''def _live_result_execution_failure(trace_dir: Path):
+    stdout_path = trace_dir.parent / f"{trace_dir.name}.log"
+    if not stdout_path.exists():
+        return None
+    try:
+        with stdout_path.open("rb") as _fh:
+            _fh.seek(0, 2)
+            _size = _fh.tell()
+            _fh.seek(max(0, _size - 131072))
+            _tail = _fh.read().decode("utf-8", errors="replace")
+    except Exception:
+        return None
+
+    _lower = _tail.lower()
+    _failed = (
+        "execution failure requires retry/repair" in _lower
+        or "execution failure recorded" in _lower
+        or "qrun_exit_code=" in _lower
+        or "missing_qrun_config=" in _lower
+        or "failed to run this experiment" in _lower
+    )
+    if not _failed:
+        return None
+
+    if (
+        "filenotfounderror" in _lower
+        and "conf_combined_factors_sota_model.yaml" in _lower
+    ):
+        _reason = (
+            "Required Qlib configuration file was missing from the resumed workspace: "
+            "conf_combined_factors_sota_model.yaml. The backtest did not run."
+        )
+    elif "missing_qrun_config=" in _lower:
+        _reason = (
+            "Required Qlib configuration was missing from the experiment workspace. "
+            "The backtest did not run."
+        )
+    elif "qrun_exit_code=137" in _lower or "qrun_exit_code=-9" in _lower:
+        _reason = (
+            "The Qlib process was killed before producing a complete backtest result, "
+            "commonly because of memory/resource pressure."
+        )
+    elif "qrun_exit_code=124" in _lower or "qrun timed out" in _lower:
+        _reason = "The Qlib backtest timed out before producing a complete result."
+    else:
+        _reason = (
+            "The experiment hit an execution/runtime failure before a valid Qlib "
+            "backtest result was produced."
+        )
+
+    return {
+        "status": "execution_failed",
+        "stage": "Qlib backtest / running",
+        "reason": _reason,
+        "scientific_result": "Not evaluated",
+        "metrics_available": False,
+        "retry": "Retry this experiment from its last valid coding checkpoint.",
+    }
+
+
+@app.route("/result/live", methods=["GET"])
+def live_result_snapshot():
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P58_LIVE_FAILURE_ROUTE_OLD,
+    _P58_LIVE_FAILURE_ROUTE_NEW,
+    "P58 derive terminal RESULT failure summary from stdout",
+)
+
+_P58_LIVE_JSON_OLD = '''    loops, updated_at = _live_result_snapshot_from_messages(combined)
+    return jsonify(
+        {
+            "id": trace_id,
+            "alive": alive,
+            "loops": loops,
+            "loop_count": len(loops),
+            "updated_at": updated_at,
+        }
+    ), 200
+'''
+_P58_LIVE_JSON_NEW = '''    loops, updated_at = _live_result_snapshot_from_messages(combined)
+    execution_failure = _live_result_execution_failure(trace_dir)
+    return jsonify(
+        {
+            "id": trace_id,
+            "alive": alive,
+            "loops": loops,
+            "loop_count": len(loops),
+            "updated_at": updated_at,
+            "execution_failure": execution_failure,
+        }
+    ), 200
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P58_LIVE_JSON_OLD,
+    _P58_LIVE_JSON_NEW,
+    "P58 include terminal failure in live RESULT snapshot",
+)
+
+# Never print provider credentials in stdout. The previous first-backend diagnostic
+# logged the complete settings object, including openai_api_key.
+_P58_LLM_LOG_OLD = '''        if not self.__class__._has_logged_settings:
+            logger.info(f"{LITELLM_SETTINGS}")
+            logger.log_object(LITELLM_SETTINGS.model_dump(), tag="LITELLM_SETTINGS")
+            self.__class__._has_logged_settings = True
+'''
+_P58_LLM_LOG_NEW = '''        if not self.__class__._has_logged_settings:
+            _raw_settings = LITELLM_SETTINGS.model_dump()
+            _safe_settings = {}
+            for _name, _value in _raw_settings.items():
+                _lower_name = str(_name).lower()
+                _secret_field = (
+                    "api_key" in _lower_name
+                    or _lower_name.endswith("_key")
+                    or "password" in _lower_name
+                    or "secret" in _lower_name
+                    or "credential" in _lower_name
+                )
+                _safe_settings[_name] = (
+                    "[REDACTED]" if _secret_field and _value else _value
+                )
+            logger.info(f"LiteLLM settings: {_safe_settings}")
+            logger.log_object(_safe_settings, tag="LITELLM_SETTINGS")
+            self.__class__._has_logged_settings = True
+'''
+patch(
+    "rdagent/oai/backend/litellm.py",
+    _P58_LLM_LOG_OLD,
+    _P58_LLM_LOG_NEW,
+    "P58 redact provider credentials from LiteLLM settings logs",
+)
+
 print("All rdagent patches applied.", flush=True)
