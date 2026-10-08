@@ -2407,4 +2407,176 @@ patch(
     "P58 redact provider credentials from LiteLLM settings logs",
 )
 
+
+# ---------------------------------------------------------------- P59 continuation-aware RESULT inheritance
+# A resumed task starts with an empty in-memory task.messages list. The durable trace
+# directory is copied, but RESULT must not wait for the new loop to finish before it
+# can show the successful loops from the source experiment. Merge source RESULT events
+# up to the selected checkpoint into /result/live, while excluding any source loops
+# that occur after the branch point.
+_P59_PARENT_HELPER_ANCHOR = '''def _live_result_execution_failure(trace_dir: Path):
+'''
+_P59_PARENT_HELPER_NEW = '''def _resume_parent_result_messages(trace_dir: Path):
+    import json as _json
+
+    meta_path = trace_dir / "_resume_meta.json"
+    if not meta_path.exists():
+        return [], None
+
+    try:
+        meta = _json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        return [], None
+
+    source_id = str(meta.get("source_id") or "").strip().strip("/")
+    checkpoint = meta.get("checkpoint") if isinstance(meta.get("checkpoint"), dict) else {}
+    if not source_id or not checkpoint:
+        return [], None
+
+    source_dir = (log_folder_path / source_id).resolve()
+    root = log_folder_path.resolve()
+    try:
+        if os.path.commonpath([str(source_dir), str(root)]) != str(root):
+            return [], None
+    except ValueError:
+        return [], None
+    if not source_dir.exists() or not source_dir.is_dir():
+        return [], {
+            "source_id": source_id,
+            "available": False,
+            "reason": "source trace is no longer available",
+        }
+
+    try:
+        selected_loop = int(checkpoint.get("loop_index"))
+    except (TypeError, ValueError):
+        return [], None
+
+    selected_step = str(checkpoint.get("step_name") or "").strip()
+    # A checkpoint is written after its named step. running/feedback/record can
+    # therefore contribute RESULT data for the selected loop; direct_exp_gen/coding
+    # cannot and must not inherit the later failed/stale result from the source trace.
+    include_selected_loop = selected_step in {"running", "feedback", "record"}
+    max_result_loop = selected_loop if include_selected_loop else selected_loop - 1
+
+    if max_result_loop < 0:
+        return [], {
+            "source_id": source_id,
+            "available": True,
+            "max_result_loop": max_result_loop,
+            "selected_loop": selected_loop,
+            "selected_step": selected_step,
+        }
+
+    parent_messages = []
+    try:
+        parent_messages = _collect_live_result_messages(source_dir, str(source_dir))
+    except Exception:
+        app.logger.exception(
+            "Failed to replay source RESULT while continuing %s from %s",
+            trace_dir,
+            source_dir,
+        )
+        parent_messages = []
+
+    # If disk compatibility replay yields nothing, use the already-loaded source task
+    # as a second path. This protects older traces whose persisted Python objects are
+    # only readable through the server's existing replayed UI messages.
+    if not parent_messages:
+        source_task = rdagent_processes.get(str(source_dir))
+        if source_task is not None and isinstance(source_task.messages, list):
+            parent_messages = [
+                msg
+                for msg in source_task.messages
+                if isinstance(msg, dict)
+                and msg.get("tag")
+                in {
+                    "research.hypothesis",
+                    "feedback.metric",
+                    "feedback.hypothesis_feedback",
+                }
+            ]
+
+    filtered = []
+    for msg in parent_messages:
+        if not isinstance(msg, dict):
+            continue
+        try:
+            loop_id = int(msg.get("loop_id"))
+        except (TypeError, ValueError):
+            continue
+        if 0 <= loop_id <= max_result_loop:
+            filtered.append(msg)
+
+    return filtered, {
+        "source_id": source_id,
+        "available": True,
+        "max_result_loop": max_result_loop,
+        "selected_loop": selected_loop,
+        "selected_step": selected_step,
+    }
+
+
+def _live_result_execution_failure(trace_dir: Path):
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P59_PARENT_HELPER_ANCHOR,
+    _P59_PARENT_HELPER_NEW,
+    "P59 inherit source RESULT up to continuation checkpoint",
+)
+
+_P59_COMBINE_OLD = '''    # Append current in-memory messages after durable messages so the newest live
+    # payload wins when both sources contain the same loop/event.
+    combined = list(disk_messages)
+    if task is not None and isinstance(task.messages, list):
+        combined.extend(task.messages)
+
+    loops, updated_at = _live_result_snapshot_from_messages(combined)
+    execution_failure = _live_result_execution_failure(trace_dir)
+'''
+_P59_COMBINE_NEW = '''    # A continuation/branch must show its already-completed source loops immediately.
+    # Parent rows are added first; the copied/truncated destination trace and then live
+    # in-memory events override them for the same loop as the continuation progresses.
+    parent_messages, continuation_source = _resume_parent_result_messages(trace_dir)
+    parent_loops, _ = _live_result_snapshot_from_messages(parent_messages)
+
+    combined = list(parent_messages)
+    combined.extend(disk_messages)
+    if task is not None and isinstance(task.messages, list):
+        combined.extend(task.messages)
+
+    loops, updated_at = _live_result_snapshot_from_messages(combined)
+    execution_failure = _live_result_execution_failure(trace_dir)
+    terminal = bool(
+        task is None
+        or task.process is None
+        or task.process.exitcode is not None
+    )
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P59_COMBINE_OLD,
+    _P59_COMBINE_NEW,
+    "P59 merge inherited + destination + live RESULT streams",
+)
+
+_P59_RESPONSE_OLD = '''            "execution_failure": execution_failure,
+        }
+    ), 200
+'''
+_P59_RESPONSE_NEW = '''            "execution_failure": execution_failure,
+            "terminal": terminal,
+            "continuation_source": continuation_source,
+            "inherited_loop_count": len(parent_loops),
+        }
+    ), 200
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P59_RESPONSE_OLD,
+    _P59_RESPONSE_NEW,
+    "P59 expose continuation RESULT inheritance state",
+)
+
 print("All rdagent patches applied.", flush=True)

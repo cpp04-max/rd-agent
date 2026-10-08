@@ -3844,3 +3844,98 @@ resultS58 =
 
 fs.writeFileSync(resultP58, resultS58);
 console.log("[patch-frontend] P58 terminal execution-failure RESULT card applied");
+
+
+// ------------------------- P59: continuation RESULT never starts blank -------------------------
+// A continuation should immediately show the completed source loops inherited from its
+// checkpoint. Keep polling through the process-start race, and distinguish "starting"
+// from a genuinely terminal trace with no structured results.
+const resultP59 = "/src/web/src/views/ResultPage.vue";
+let resultS59 = fs.readFileSync(resultP59, "utf8");
+
+const stateP59Old =
+  'const liveResultFailure = ref(null);\n' +
+  'let liveResultTimer = null;';
+const stateP59New =
+  'const liveResultFailure = ref(null);\n' +
+  'const liveResultTerminal = ref(false);\n' +
+  'const liveResultInheritedCount = ref(0);\n' +
+  'const liveResultSource = ref(null);\n' +
+  'let liveResultTimer = null;';
+if (!resultS59.includes(stateP59Old)) {
+  console.error("[patch-frontend] FAILED: P59 state anchor drifted.");
+  process.exit(1);
+}
+resultS59 = resultS59.replace(stateP59Old, stateP59New);
+
+const pollStateP59Old =
+  '    liveResultFailure.value = snapshot?.execution_failure || null;\n' +
+  '    updateData();\n\n' +
+  '    if (liveResultAlive.value) {\n' +
+  '      scheduleLiveResultPoll(3500);\n' +
+  '    }';
+const pollStateP59New =
+  '    liveResultFailure.value = snapshot?.execution_failure || null;\n' +
+  '    liveResultTerminal.value = Boolean(snapshot?.terminal);\n' +
+  '    liveResultInheritedCount.value = Number(snapshot?.inherited_loop_count || 0);\n' +
+  '    liveResultSource.value = snapshot?.continuation_source || null;\n' +
+  '    updateData();\n\n' +
+  '    // is_alive() can briefly be false during process startup. terminal is the\n' +
+  '    // authoritative signal; keep polling until the child actually exits.\n' +
+  '    if (!liveResultTerminal.value) {\n' +
+  '      scheduleLiveResultPoll(3500);\n' +
+  '    }';
+if (!resultS59.includes(pollStateP59Old)) {
+  console.error("[patch-frontend] FAILED: P59 polling/terminal anchor drifted.");
+  process.exit(1);
+}
+resultS59 = resultS59.replace(pollStateP59Old, pollStateP59New);
+
+const resetP59Old =
+  '    liveResultFailure.value = null;\n' +
+  '    pollLiveResults();';
+const resetP59New =
+  '    liveResultFailure.value = null;\n' +
+  '    liveResultTerminal.value = false;\n' +
+  '    liveResultInheritedCount.value = 0;\n' +
+  '    liveResultSource.value = null;\n' +
+  '    pollLiveResults();';
+if (!resultS59.includes(resetP59Old)) {
+  console.error("[patch-frontend] FAILED: P59 trace reset anchor drifted.");
+  process.exit(1);
+}
+resultS59 = resultS59.replace(resetP59Old, resetP59New);
+
+const emptyTextP59Old =
+  '{{ liveResultAlive ? "Run is in progress. Results will appear here as soon as each loop writes metrics or feedback." : "No structured result events are available for this trace yet. The raw run log can still be downloaded above." }}';
+const emptyTextP59New =
+  '{{ !liveResultTerminal ? (liveResultSource ? "Continuation is starting. Completed source-loop results are being restored while the next loop runs." : "Run is starting or in progress. Results will appear here as soon as each loop writes metrics or feedback.") : "No structured result events are available for this trace. The raw run log can still be downloaded above." }}';
+if (!resultS59.includes(emptyTextP59Old)) {
+  console.error("[patch-frontend] FAILED: P59 empty-state text anchor drifted.");
+  process.exit(1);
+}
+resultS59 = resultS59.replace(emptyTextP59Old, emptyTextP59New);
+
+const stripCountP59Old = [
+  '          <span>',
+  '            {{ liveResultRows.length }}',
+  '            {{ liveResultRows.length === 1 ? "loop" : "loops" }} available',
+  '          </span>',
+].join("\n");
+const stripCountP59New = [
+  '          <span>',
+  '            {{ liveResultRows.length }}',
+  '            {{ liveResultRows.length === 1 ? "loop" : "loops" }} available',
+  '          </span>',
+  '          <span v-if="liveResultInheritedCount > 0" class="live-result-note">',
+  '            {{ liveResultInheritedCount }} inherited from source experiment',
+  '          </span>',
+].join("\n");
+if (!resultS59.includes(stripCountP59Old)) {
+  console.error("[patch-frontend] FAILED: P59 live strip anchor drifted.");
+  process.exit(1);
+}
+resultS59 = resultS59.replace(stripCountP59Old, stripCountP59New);
+
+fs.writeFileSync(resultP59, resultS59);
+console.log("[patch-frontend] P59 continuation-aware RESULT inheritance applied");
