@@ -2579,4 +2579,126 @@ patch(
     "P59 expose continuation RESULT inheritance state",
 )
 
+
+# ---------------------------------------------------------------- P60 prevent stale copied future loops during branch startup
+# copytree() necessarily copies the source's full durable trace before the child calls
+# LoopBase.load(checkout=True) and truncates it to the selected checkpoint. During that
+# short window /result/live must not expose source events after the branch point.
+_P60_INFO_MAX_OLD = '''            "selected_step": selected_step,
+        }
+
+    parent_messages = []
+'''
+_P60_INFO_MAX_NEW = '''            "selected_step": selected_step,
+            "created_at": meta.get("created_at"),
+        }
+
+    parent_messages = []
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P60_INFO_MAX_OLD,
+    _P60_INFO_MAX_NEW,
+    "P60 include continuation creation time for empty parent range",
+)
+
+_P60_INFO_FINAL_OLD = '''        "selected_step": selected_step,
+    }
+
+
+def _live_result_execution_failure(trace_dir: Path):
+'''
+_P60_INFO_FINAL_NEW = '''        "selected_step": selected_step,
+        "created_at": meta.get("created_at"),
+    }
+
+
+def _filter_continuation_destination_messages(messages, continuation_source):
+    """Drop copied source events past the selected branch checkpoint.
+
+    Events produced after _resume_meta.created_at belong to the new continuation and
+    are retained even when they reuse the selected loop id.
+    """
+    if not isinstance(continuation_source, dict):
+        return list(messages or [])
+
+    try:
+        max_result_loop = int(continuation_source.get("max_result_loop"))
+    except (TypeError, ValueError):
+        return list(messages or [])
+
+    created_at_raw = str(continuation_source.get("created_at") or "").strip()
+    if not created_at_raw:
+        return list(messages or [])
+
+    try:
+        created_at = datetime.fromisoformat(created_at_raw.replace("Z", "+00:00"))
+        if created_at.tzinfo is None:
+            created_at = created_at.replace(tzinfo=timezone.utc)
+    except Exception:
+        return list(messages or [])
+
+    filtered = []
+    for msg in messages or []:
+        if not isinstance(msg, dict):
+            continue
+
+        try:
+            loop_id = int(msg.get("loop_id"))
+        except (TypeError, ValueError):
+            loop_id = None
+
+        timestamp_raw = str(msg.get("timestamp") or "").strip()
+        is_new_continuation_event = False
+        if timestamp_raw:
+            try:
+                timestamp = datetime.fromisoformat(timestamp_raw.replace("Z", "+00:00"))
+                if timestamp.tzinfo is None:
+                    timestamp = timestamp.replace(tzinfo=timezone.utc)
+                is_new_continuation_event = timestamp >= created_at
+            except Exception:
+                is_new_continuation_event = False
+
+        if (
+            loop_id is None
+            or loop_id <= max_result_loop
+            or is_new_continuation_event
+        ):
+            filtered.append(msg)
+
+    return filtered
+
+
+def _live_result_execution_failure(trace_dir: Path):
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P60_INFO_FINAL_OLD,
+    _P60_INFO_FINAL_NEW,
+    "P60 filter copied destination RESULT past branch checkpoint",
+)
+
+_P60_COMBINE_OLD = '''    parent_messages, continuation_source = _resume_parent_result_messages(trace_dir)
+    parent_loops, _ = _live_result_snapshot_from_messages(parent_messages)
+
+    combined = list(parent_messages)
+    combined.extend(disk_messages)
+'''
+_P60_COMBINE_NEW = '''    parent_messages, continuation_source = _resume_parent_result_messages(trace_dir)
+    parent_loops, _ = _live_result_snapshot_from_messages(parent_messages)
+    disk_messages = _filter_continuation_destination_messages(
+        disk_messages,
+        continuation_source,
+    )
+
+    combined = list(parent_messages)
+    combined.extend(disk_messages)
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P60_COMBINE_OLD,
+    _P60_COMBINE_NEW,
+    "P60 suppress stale copied future-loop RESULT events",
+)
+
 print("All rdagent patches applied.", flush=True)
