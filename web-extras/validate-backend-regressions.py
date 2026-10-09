@@ -66,6 +66,9 @@ checks = {
         >= model_runner.count("to_parquet(target_path"),
     "budget_action_fallback":
         '_candidate_name = type(_candidate).__name__.lower()' in loop,
+    "workspace_loss_fallback":
+        "resumed Qlib workspace disappeared" in quant
+        and "cannot save file into a non-existent directory" in server,
 }
 
 failed = [name for name, ok in checks.items() if not ok]

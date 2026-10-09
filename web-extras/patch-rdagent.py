@@ -3042,4 +3042,142 @@ patch(
     "P66 resolve factor/model action reliably in time-budget guard",
 )
 
+
+# ---------------------------------------------------------------- P67 workspace-loss fallback + legacy failure visibility
+# P65/P66 should make a missing experiment workspace impossible. If a future refactor
+# reintroduces it, convert only this specific infrastructure OSError into the normal
+# execution-failure path instead of crashing the entire task.
+_P67_RUNNING_OLD = '''    def running(self, prev_out: dict[str, Any]):
+        if prev_out["direct_exp_gen"]["propose"].action == "factor":
+            exp = self.factor_runner.develop(prev_out["coding"])
+            if exp is None:
+                logger.error(f"Factor extraction failed.")
+                raise FactorEmptyError("Factor extraction failed.")
+        elif prev_out["direct_exp_gen"]["propose"].action == "model":
+            exp = self.model_runner.develop(prev_out["coding"])
+        logger.log_object(exp, tag="runner result")
+        return exp
+'''
+_P67_RUNNING_NEW = '''    def running(self, prev_out: dict[str, Any]):
+        _action = prev_out["direct_exp_gen"]["propose"].action
+        try:
+            if _action == "factor":
+                exp = self.factor_runner.develop(prev_out["coding"])
+                if exp is None:
+                    logger.error(f"Factor extraction failed.")
+                    raise FactorEmptyError("Factor extraction failed.")
+            elif _action == "model":
+                exp = self.model_runner.develop(prev_out["coding"])
+        except OSError as exc:
+            _text = str(exc)
+            _lower = _text.lower()
+            if (
+                "rd-agent_workspace" in _lower
+                and (
+                    "non-existent directory" in _lower
+                    or "no such file or directory" in _lower
+                )
+            ):
+                _message = (
+                    "Execution failed: resumed Qlib workspace disappeared before "
+                    f"{_action} runner output could be written: {_text}"
+                )
+                if _action == "model":
+                    raise ModelEmptyError(_message) from exc
+                raise FactorEmptyError(_message) from exc
+            raise
+        logger.log_object(exp, tag="runner result")
+        return exp
+'''
+patch(
+    "rdagent/app/qlib_rd_loop/quant.py",
+    _P67_RUNNING_OLD,
+    _P67_RUNNING_NEW,
+    "P67 route missing resumed workspace through execution-failure handling",
+)
+
+_P67_EXEC_MARKER_OLD = '''        or "qrun timed out" in lower
+    )
+'''
+_P67_EXEC_MARKER_NEW = '''        or "qrun timed out" in lower
+        or "resumed qlib workspace disappeared" in lower
+        or "cannot save file into a non-existent directory" in lower
+    )
+'''
+patch(
+    "rdagent/app/qlib_rd_loop/quant.py",
+    _P67_EXEC_MARKER_OLD,
+    _P67_EXEC_MARKER_NEW,
+    "P67 classify missing workspace as infrastructure execution failure",
+)
+
+_P67_REASON_OLD = '''    if "qrun_exit_code=124" in lower or "timed out" in lower or "running time exceeds" in lower:
+        return (
+            "Execution failed: the Qlib run timed out before producing a complete "
+            "backtest result. Retry/repair the execution before evaluating the hypothesis."
+        )
+    return (
+'''
+_P67_REASON_NEW = '''    if "qrun_exit_code=124" in lower or "timed out" in lower or "running time exceeds" in lower:
+        return (
+            "Execution failed: the Qlib run timed out before producing a complete "
+            "backtest result. Retry/repair the execution before evaluating the hypothesis."
+        )
+    if (
+        "resumed qlib workspace disappeared" in lower
+        or "cannot save file into a non-existent directory" in lower
+    ):
+        return (
+            "Execution failed: the resumed Qlib workspace was missing before runner "
+            "output could be written. Retry from the coding checkpoint; the workspace "
+            "will be re-materialized before the runner writes any files."
+        )
+    return (
+'''
+patch(
+    "rdagent/app/qlib_rd_loop/quant.py",
+    _P67_REASON_OLD,
+    _P67_REASON_NEW,
+    "P67 explain missing workspace execution failure",
+)
+
+_P67_LIVE_FAILED_OLD = '''        or "failed to run this experiment" in _lower
+    )
+'''
+_P67_LIVE_FAILED_NEW = '''        or "failed to run this experiment" in _lower
+        or "cannot save file into a non-existent directory" in _lower
+        or "resumed qlib workspace disappeared" in _lower
+    )
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P67_LIVE_FAILED_OLD,
+    _P67_LIVE_FAILED_NEW,
+    "P67 expose missing-workspace crash in RESULT",
+)
+
+_P67_LIVE_REASON_OLD = '''    elif "qrun_exit_code=124" in _lower or "qrun timed out" in _lower:
+        _reason = "The Qlib backtest timed out before producing a complete result."
+    else:
+'''
+_P67_LIVE_REASON_NEW = '''    elif "qrun_exit_code=124" in _lower or "qrun timed out" in _lower:
+        _reason = "The Qlib backtest timed out before producing a complete result."
+    elif (
+        "cannot save file into a non-existent directory" in _lower
+        or "resumed qlib workspace disappeared" in _lower
+    ):
+        _reason = (
+            "The resumed Qlib workspace directory disappeared before factor/model "
+            "runner output could be written. Retry from the coding checkpoint; the "
+            "workspace will be restored before the write."
+        )
+    else:
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P67_LIVE_REASON_OLD,
+    _P67_LIVE_REASON_NEW,
+    "P67 render actionable missing-workspace failure reason",
+)
+
 print("All rdagent patches applied.", flush=True)
