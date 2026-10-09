@@ -69,6 +69,9 @@ checks = {
     "workspace_loss_fallback":
         "resumed Qlib workspace disappeared" in quant
         and "cannot save file into a non-existent directory" in server,
+    "workspace_crash_resume_rewind":
+        "_resume_terminal_workspace_crash_state" in server
+        and "terminal_workspace_crash_repair" in server,
 }
 
 failed = [name for name, ok in checks.items() if not ok]

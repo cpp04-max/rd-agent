@@ -149,6 +149,50 @@ def _resume_execution_failure_retry_step(checkpoint_path: Path):
     return retry_step or "coding"
 
 
+def _resume_terminal_workspace_crash_state(trace_dir: Path):
+    """Recover the failed running loop from a terminal missing-workspace traceback."""
+    import re as _re
+
+    stdout_path = trace_dir.parent / f"{trace_dir.name}.log"
+    if not stdout_path.exists():
+        return None
+    try:
+        text = stdout_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+
+    lower = text.lower()
+    crash_marker = "[rd-agent] task process crashed:"
+    crash_pos = lower.rfind(crash_marker)
+    if crash_pos < 0:
+        return None
+
+    crash_tail = lower[crash_pos:]
+    if not (
+        "cannot save file into a non-existent directory" in crash_tail
+        and "rd-agent_workspace" in crash_tail
+    ):
+        return None
+
+    prefix = text[:crash_pos]
+    running_matches = list(
+        _re.finditer(r"Start Loop (\d+), Step 2: running", prefix)
+    )
+    if not running_matches:
+        return None
+
+    failed_loop = int(running_matches[-1].group(1))
+    return {
+        "loop_index": failed_loop,
+        "loop_number": failed_loop + 1,
+        "reason": (
+            "Execution crashed because the resumed Qlib workspace directory was "
+            "missing before parquet output could be written. Retry this loop from "
+            "its coding checkpoint."
+        ),
+    }
+
+
 def _resume_legacy_stale_qrun_state(trace_dir: Path):
     """Detect old loops whose Qlib execution was silently served from LocalEnv cache.
 
@@ -379,6 +423,7 @@ def resume_options():
 
     latest = records[-1]
     legacy_stale_qrun = _resume_legacy_stale_qrun_state(source_dir)
+    terminal_workspace_crash = _resume_terminal_workspace_crash_state(source_dir)
 
     # Present one intuitive checkpoint per loop for the normal UI. Prefer the
     # completed "record" checkpoint; if the loop is partial, use its latest
@@ -416,6 +461,23 @@ def resume_options():
             )
 
         selected = retry_checkpoint or completed or candidates[-1]
+
+        terminal_workspace_failed = bool(
+            terminal_workspace_crash
+            and loop_index == int(terminal_workspace_crash["loop_index"])
+        )
+        if terminal_workspace_failed:
+            crash_retry = next(
+                (
+                    item
+                    for item in reversed(candidates)
+                    if item["step_name"] == "coding"
+                ),
+                None,
+            )
+            if crash_retry is not None:
+                selected = crash_retry
+                execution_failure_reason = terminal_workspace_crash["reason"]
 
         legacy_invalid = bool(
             legacy_stale_qrun
@@ -491,6 +553,7 @@ def resume_options():
             "checkpoints": records,
             "resume_meta": resume_meta,
             "legacy_stale_qrun": legacy_stale_qrun,
+            "terminal_workspace_crash": terminal_workspace_crash,
         }
     ), 200
 
@@ -542,15 +605,36 @@ def resume_trace():
 
     auto_retry_execution = False
     auto_retry_legacy_cache = False
+    auto_retry_workspace_crash = False
     legacy_stale_qrun = _resume_legacy_stale_qrun_state(source_dir)
+    terminal_workspace_crash = _resume_terminal_workspace_crash_state(source_dir)
 
     if checkpoint_key == "latest":
         selected = records[-1]
 
+        # P68: an unhandled running-step crash can coexist with a later speculative
+        # direct_exp_gen checkpoint. Retry the actual failed loop, never that future
+        # hypothesis checkpoint.
+        if terminal_workspace_crash:
+            failed_loop = int(terminal_workspace_crash["loop_index"])
+            retry_checkpoint = next(
+                (
+                    item
+                    for item in reversed(records)
+                    if item["loop_index"] == failed_loop
+                    and item["step_name"] == "coding"
+                ),
+                None,
+            )
+            if retry_checkpoint is not None:
+                selected = retry_checkpoint
+                auto_retry_execution = True
+                auto_retry_workspace_crash = True
+
         # P64: traces produced before P61 can contain scientifically invalid loops
         # whose qrun was silently served from LocalEnv cache. Rewind automatically
         # to the first affected loop's coding checkpoint.
-        if legacy_stale_qrun:
+        if legacy_stale_qrun and not auto_retry_workspace_crash:
             first_bad_loop = int(legacy_stale_qrun["loop_index"])
             retry_checkpoint = next(
                 (
@@ -566,7 +650,11 @@ def resume_trace():
                 auto_retry_execution = True
                 auto_retry_legacy_cache = True
 
-        if not auto_retry_legacy_cache and selected["step_name"] == "record":
+        if (
+            not auto_retry_legacy_cache
+            and not auto_retry_workspace_crash
+            and selected["step_name"] == "record"
+        ):
             execution_failure_reason = _resume_execution_failure_reason(Path(selected["path"]))
             if execution_failure_reason:
                 retry_checkpoint = next(
@@ -650,6 +738,9 @@ def resume_trace():
         "all_duration_hours": duration_hours,
         "instruction_override": instruction or None,
         "legacy_stale_qrun_repair": legacy_stale_qrun if auto_retry_legacy_cache else None,
+        "terminal_workspace_crash_repair": (
+            terminal_workspace_crash if auto_retry_workspace_crash else None
+        ),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     (dest_dir / "_resume_meta.json").write_text(_json.dumps(meta, indent=2), encoding="utf-8")
@@ -735,6 +826,9 @@ def resume_trace():
             "all_duration": duration_hours,
             "legacy_stale_qrun_repair": (
                 legacy_stale_qrun if auto_retry_legacy_cache else None
+            ),
+            "terminal_workspace_crash_repair": (
+                terminal_workspace_crash if auto_retry_workspace_crash else None
             ),
         }
     ), 200
