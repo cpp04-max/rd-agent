@@ -3188,31 +3188,37 @@ patch(
 # Continue/Retry/Branch generations, the immediate parent may itself rely on inherited
 # RESULT rows that are not physically present in its local FileStorage. Resolve the
 # ancestry recursively, while applying every checkpoint boundary and guarding cycles.
+_P69_SIG_OLD = '''def _resume_parent_result_messages(trace_dir: Path):
+    import json as _json
+'''
+_P69_SIG_NEW = '''def _resume_parent_result_messages(
+    trace_dir: Path,
+    _visited: set[str] | None = None,
+    _depth: int = 0,
+):
+    import json as _json
+
+    if _visited is None:
+        _visited = set()
+    if _depth >= 32:
+        return [], {
+            "available": False,
+            "reason": "continuation ancestry exceeds 32 levels",
+            "ancestry_depth": _depth,
+        }
+    _trace_key = str(trace_dir.resolve())
+    if _trace_key in _visited:
+        return [], {
+            "available": False,
+            "reason": "continuation ancestry cycle detected",
+            "ancestry_depth": _depth,
+        }
+    _visited.add(_trace_key)
+'''
 patch(
     "rdagent/log/server/app.py",
-    "def _resume_parent_result_messages(trace_dir: Path):\n    import json as _json\n",
-    "def _resume_parent_result_messages(\\n"
-    "    trace_dir: Path,\\n"
-    "    _visited: set[str] | None = None,\\n"
-    "    _depth: int = 0,\\n"
-    "):\\n"
-    "    import json as _json\\n\\n"
-    "    if _visited is None:\\n"
-    "        _visited = set()\\n"
-    "    if _depth >= 32:\\n"
-    "        return [], {\\n"
-    '            "available": False,\\n'
-    '            "reason": "continuation ancestry exceeds 32 levels",\\n'
-    '            "ancestry_depth": _depth,\\n'
-    "        }\\n"
-    "    _trace_key = str(trace_dir.resolve())\\n"
-    "    if _trace_key in _visited:\\n"
-    "        return [], {\\n"
-    '            "available": False,\\n'
-    '            "reason": "continuation ancestry cycle detected",\\n'
-    '            "ancestry_depth": _depth,\\n'
-    "        }\\n"
-    "    _visited.add(_trace_key)\\n",
+    _P69_SIG_OLD,
+    _P69_SIG_NEW,
     "P69 add bounded recursive RESULT ancestry state",
 )
 
