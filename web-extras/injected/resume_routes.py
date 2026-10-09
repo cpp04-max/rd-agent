@@ -477,7 +477,13 @@ def resume_options():
             )
             if crash_retry is not None:
                 selected = crash_retry
+                retry_checkpoint = crash_retry
                 execution_failure_reason = terminal_workspace_crash["reason"]
+
+        workspace_crash_dependent = bool(
+            terminal_workspace_crash
+            and loop_index > int(terminal_workspace_crash["loop_index"])
+        )
 
         legacy_invalid = bool(
             legacy_stale_qrun
@@ -505,8 +511,12 @@ def resume_options():
                 "execution_failed": bool(execution_failure_reason),
                 "failure_reason": execution_failure_reason,
                 "legacy_stale_qrun": legacy_invalid,
-                "scientifically_valid": not legacy_invalid,
+                "terminal_workspace_crash_dependent": workspace_crash_dependent,
+                "scientifically_valid": not legacy_invalid and not workspace_crash_dependent,
                 "label": (
+                    f"Loop {selected['loop_number']} · invalid after workspace crash"
+                    if workspace_crash_dependent
+                    else (
                     f"Loop {selected['loop_number']} · stale cached backtest · retry run"
                     if legacy_invalid
                     and loop_index == int(legacy_stale_qrun["loop_index"])
@@ -529,6 +539,7 @@ def resume_options():
                                 )
                             )
                         )
+                    )
                     )
                 ),
             }
@@ -673,6 +684,28 @@ def resume_trace():
         selected = next((r for r in records if r["key"] == checkpoint_key), None)
         if selected is None:
             return jsonify({"error": "Requested checkpoint was not found"}), 404
+
+        if terminal_workspace_crash:
+            failed_loop = int(terminal_workspace_crash["loop_index"])
+            invalid_workspace_selection = (
+                selected["loop_index"] > failed_loop
+                or (
+                    selected["loop_index"] == failed_loop
+                    and selected["step_name"] not in {"direct_exp_gen", "coding"}
+                )
+            )
+            if invalid_workspace_selection:
+                return jsonify(
+                    {
+                        "error": (
+                            f"Loop {failed_loop + 1} crashed during execution because "
+                            "its resumed Qlib workspace was missing. Later speculative "
+                            "checkpoints depend on an unevaluated loop. Resume from that "
+                            "loop's coding checkpoint instead."
+                        ),
+                        "terminal_workspace_crash": terminal_workspace_crash,
+                    }
+                ), 409
 
         if legacy_stale_qrun:
             first_bad_loop = int(legacy_stale_qrun["loop_index"])
