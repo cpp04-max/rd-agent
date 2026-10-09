@@ -1,6 +1,9 @@
 from __future__ import annotations
 import ast
+import json
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 root = Path(sys.argv[1] if len(sys.argv) > 1 else "/app/RD-Agent")
@@ -97,4 +100,93 @@ if failed:
 section = workspace[workspace.find("class QlibFBWorkspace"):]
 if "LocalEnv(" not in section or "enable_cache=False" not in section:
     raise SystemExit("Qlib LocalEnv fallback is not explicitly cache-disabled")
+# Execute the actual patched RESULT inheritance helper without importing Flask/RD-Agent.
+# This catches recursive-ancestry logic errors in patch-smoke, independently of Docker Hub.
+_server_tree = ast.parse(server)
+_wanted = {"_resume_parent_result_messages", "_live_result_snapshot_from_messages"}
+_nodes = [
+    node for node in _server_tree.body
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in _wanted
+]
+if {node.name for node in _nodes} != _wanted:
+    raise SystemExit("could not extract patched RESULT helper functions for runtime regression")
+
+class _DummyLogger:
+    def exception(self, *args, **kwargs):
+        pass
+
+class _DummyApp:
+    logger = _DummyLogger()
+
+_ns = {
+    "Path": Path,
+    "os": os,
+    "rdagent_processes": {},
+    "app": _DummyApp(),
+}
+exec(compile(ast.Module(body=_nodes, type_ignores=[]), "<result-regression>", "exec"), _ns)
+
+def _metric(loop_id, value):
+    return {
+        "tag": "feedback.metric",
+        "loop_id": loop_id,
+        "timestamp": "2026-10-09T00:00:00+00:00",
+        "content": {"result": {"IC": value}},
+    }
+
+with tempfile.TemporaryDirectory() as _tmp:
+    _trace_root = Path(_tmp)
+    _scenario = _trace_root / "Finance Whole Pipeline"
+    _base = _scenario / "base"
+    _middle = _scenario / "middle"
+    _leaf = _scenario / "leaf"
+    for _path in (_base, _middle, _leaf):
+        _path.mkdir(parents=True, exist_ok=True)
+
+    (_middle / "_resume_meta.json").write_text(json.dumps({
+        "source_id": "Finance Whole Pipeline/base",
+        "checkpoint": {"loop_index": 1, "step_name": "record", "step_index": 4},
+        "created_at": "2026-10-09T00:10:00+00:00",
+    }))
+    (_leaf / "_resume_meta.json").write_text(json.dumps({
+        "source_id": "Finance Whole Pipeline/middle",
+        "checkpoint": {"loop_index": 2, "step_name": "coding", "step_index": 1},
+        "created_at": "2026-10-09T00:20:00+00:00",
+    }))
+
+    _direct = {
+        str(_base.resolve()): [_metric(0, 0.01), _metric(1, 0.02), _metric(2, 0.99)],
+        str(_middle.resolve()): [],
+        str(_leaf.resolve()): [],
+    }
+    def _fake_collect(trace_dir, trace_id):
+        return list(_direct.get(str(Path(trace_dir).resolve()), []))
+
+    _ns["log_folder_path"] = _trace_root
+    _ns["_collect_live_result_messages"] = _fake_collect
+    _inherit = _ns["_resume_parent_result_messages"]
+    _snapshot = _ns["_live_result_snapshot_from_messages"]
+
+    _messages, _info = _inherit(_leaf)
+    _rows, _ = _snapshot(_messages)
+    if [row["loop_id"] for row in _rows] != [0, 1]:
+        raise SystemExit(
+            "recursive RESULT inheritance failed: expected ancestor loops [0, 1], got "
+            + repr([row["loop_id"] for row in _rows])
+        )
+    if any(row["loop_id"] == 2 for row in _rows):
+        raise SystemExit("checkpoint filtering resurrected a post-branch RESULT loop")
+
+    # Create an ancestry cycle and verify it terminates without adding invalid rows.
+    (_base / "_resume_meta.json").write_text(json.dumps({
+        "source_id": "Finance Whole Pipeline/leaf",
+        "checkpoint": {"loop_index": 1, "step_name": "record", "step_index": 4},
+        "created_at": "2026-10-09T00:00:00+00:00",
+    }))
+    _cycle_messages, _ = _inherit(_leaf)
+    _cycle_rows, _ = _snapshot(_cycle_messages)
+    if [row["loop_id"] for row in _cycle_rows] != [0, 1]:
+        raise SystemExit("RESULT ancestry cycle guard failed or duplicated invalid loops")
+
+print("[backend-regression] recursive continuation RESULT runtime: OK")
 print("[backend-regression] all checks passed")
