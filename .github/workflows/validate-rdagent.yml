@@ -16,6 +16,8 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
+          sudo mkdir -p /src
+          sudo chown "$USER":"$USER" /src
           git init -q /src
           git -C /src remote add origin https://github.com/microsoft/RD-Agent.git
           git -C /src fetch -q --depth 1 origin 6762f84f9bc0f5c6486c50a00e128a57ac6c3683
