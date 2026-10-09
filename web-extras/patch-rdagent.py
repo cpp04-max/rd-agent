@@ -2862,4 +2862,184 @@ patch(
     "P63 include qlib source-data fingerprint in factor execution cache",
 )
 
+
+# ---------------------------------------------------------------- P65 resumed Qlib workspace lifecycle
+# A resumed checkpoint can reference a workspace directory from a pre-deploy image.
+# P58 repaired that directory inside execute(), but factor/model runners write parquet
+# BEFORE execute() is called. Materialize the workspace at runner entry, then keep the
+# P58 pre-qrun repair as a second safety net.
+_P65_WS_INIT_OLD = '''    def __init__(self, template_folder_path: Path, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.inject_code_from_folder(template_folder_path)
+
+    def execute(self, qlib_config_name: str = "conf.yaml", run_env: dict = {}, *args, **kwargs) -> str:
+'''
+_P65_WS_INIT_NEW = '''    def __init__(self, template_folder_path: Path, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.inject_code_from_folder(template_folder_path)
+
+    def ensure_materialized(self) -> None:
+        """Recreate an ephemeral workspace from the durable in-memory file_dict."""
+        self.prepare()
+        if self.file_dict:
+            self.inject_files(**dict(self.file_dict))
+
+    def execute(self, qlib_config_name: str = "conf.yaml", run_env: dict = {}, *args, **kwargs) -> str:
+'''
+patch(
+    "rdagent/scenarios/qlib/experiment/workspace.py",
+    _P65_WS_INIT_OLD,
+    _P65_WS_INIT_NEW,
+    "P65 add Qlib workspace materialization lifecycle",
+)
+
+_P65_P58_REHYDRATE_OLD = '''        self.prepare()
+        self.inject_files(**self.file_dict)
+        _config_path = self.workspace_path / qlib_config_name
+'''
+_P65_P58_REHYDRATE_NEW = '''        self.ensure_materialized()
+        _config_path = self.workspace_path / qlib_config_name
+'''
+patch(
+    "rdagent/scenarios/qlib/experiment/workspace.py",
+    _P65_P58_REHYDRATE_OLD,
+    _P65_P58_REHYDRATE_NEW,
+    "P65 use shared materialization before qrun",
+)
+
+_P65_FACTOR_DEVELOP_OLD = '''        if exp.based_experiments and exp.based_experiments[-1].result is None:
+            logger.info(f"Baseline experiment execution ...")
+'''
+_P65_FACTOR_DEVELOP_NEW = '''        # P65: resume checkpoints outlive the image filesystem. The factor runner
+        # writes combined_factors_df.parquet before QlibFBWorkspace.execute(), so
+        # restore the experiment workspace before any processing/writes.
+        exp.experiment_workspace.ensure_materialized()
+
+        if exp.based_experiments and exp.based_experiments[-1].result is None:
+            logger.info(f"Baseline experiment execution ...")
+'''
+patch(
+    "rdagent/scenarios/qlib/developer/factor_runner.py",
+    _P65_FACTOR_DEVELOP_OLD,
+    _P65_FACTOR_DEVELOP_NEW,
+    "P65 materialize factor experiment workspace before parquet writes",
+)
+
+_P65_MODEL_DEVELOP_OLD = '''        if exp.based_experiments and exp.based_experiments[-1].result is None:
+            exp.based_experiments[-1] = self.develop(exp.based_experiments[-1])
+'''
+_P65_MODEL_DEVELOP_NEW = '''        # P65: restore the ephemeral experiment workspace before SOTA factor
+        # parquet/model files are written during a resumed run.
+        exp.experiment_workspace.ensure_materialized()
+
+        if exp.based_experiments and exp.based_experiments[-1].result is None:
+            exp.based_experiments[-1] = self.develop(exp.based_experiments[-1])
+'''
+patch(
+    "rdagent/scenarios/qlib/developer/model_runner.py",
+    _P65_MODEL_DEVELOP_OLD,
+    _P65_MODEL_DEVELOP_NEW,
+    "P65 materialize model experiment workspace before parquet writes",
+)
+
+
+# ---------------------------------------------------------------- P66 defensive runner writes + reliable time-budget action
+# Keep every parquet write independently safe even if a future runner refactor bypasses
+# the runner-entry materialization call.
+_P66_FACTOR_TARGET_OLD = '''            target_path = exp.experiment_workspace.workspace_path / "combined_factors_df.parquet"
+
+            # Save the combined factors to the workspace
+            combined_factors.to_parquet(target_path, engine="pyarrow")
+'''
+_P66_FACTOR_TARGET_NEW = '''            target_path = exp.experiment_workspace.workspace_path / "combined_factors_df.parquet"
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Save the combined factors to the workspace
+            combined_factors.to_parquet(target_path, engine="pyarrow")
+'''
+patch(
+    "rdagent/scenarios/qlib/developer/factor_runner.py",
+    _P66_FACTOR_TARGET_OLD,
+    _P66_FACTOR_TARGET_NEW,
+    "P66 ensure factor combined parquet parent exists",
+)
+
+_P66_FACTOR_BASE_TARGET_OLD = '''                target_path = exp.experiment_workspace.workspace_path / "combined_factors_df.parquet"
+                # Save the combined factors to the workspace
+                factors.to_parquet(target_path, engine="pyarrow")
+'''
+_P66_FACTOR_BASE_TARGET_NEW = '''                target_path = exp.experiment_workspace.workspace_path / "combined_factors_df.parquet"
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+                # Save the combined factors to the workspace
+                factors.to_parquet(target_path, engine="pyarrow")
+'''
+patch(
+    "rdagent/scenarios/qlib/developer/factor_runner.py",
+    _P66_FACTOR_BASE_TARGET_OLD,
+    _P66_FACTOR_BASE_TARGET_NEW,
+    "P66 ensure base-factor parquet parent exists",
+)
+
+_P66_MODEL_TARGET_OLD = '''                target_path = exp.experiment_workspace.workspace_path / "combined_factors_df.parquet"
+
+                # Save the combined factors to the workspace
+                combined_factors.to_parquet(target_path, engine="pyarrow")
+'''
+_P66_MODEL_TARGET_NEW = '''                target_path = exp.experiment_workspace.workspace_path / "combined_factors_df.parquet"
+                target_path.parent.mkdir(parents=True, exist_ok=True)
+
+                # Save the combined factors to the workspace
+                combined_factors.to_parquet(target_path, engine="pyarrow")
+'''
+patch(
+    "rdagent/scenarios/qlib/developer/model_runner.py",
+    _P66_MODEL_TARGET_OLD,
+    _P66_MODEL_TARGET_NEW,
+    "P66 ensure model combined parquet parent exists",
+)
+
+_P66_ACTION_OLD = '''                    _action = None
+                    try:
+                        _direct = self.loop_prev_out[loop_id].get("direct_exp_gen") or {}
+                        _proposal = _direct.get("propose") if isinstance(_direct, dict) else None
+                        _action = getattr(_proposal, "action", None)
+                    except Exception:
+                        _action = None
+'''
+_P66_ACTION_NEW = '''                    _action = None
+                    try:
+                        _loop_state = self.loop_prev_out.get(loop_id, {})
+                        _direct = (
+                            _loop_state.get("direct_exp_gen")
+                            if isinstance(_loop_state, dict)
+                            else None
+                        ) or {}
+                        _proposal = _direct.get("propose") if isinstance(_direct, dict) else None
+                        _action = getattr(_proposal, "action", None)
+                        if _action is None and isinstance(_proposal, dict):
+                            _action = _proposal.get("action")
+
+                        # With parallel kickoff/resume the current loop state can briefly
+                        # be incomplete at this hook. Fall back to the generated/coded
+                        # experiment class instead of weakening the budget to "unknown".
+                        if _action not in {"factor", "model"} and isinstance(_loop_state, dict):
+                            _candidate = (
+                                _loop_state.get("coding")
+                                or (_direct.get("exp_gen") if isinstance(_direct, dict) else None)
+                            )
+                            _candidate_name = type(_candidate).__name__.lower()
+                            if "factor" in _candidate_name:
+                                _action = "factor"
+                            elif "model" in _candidate_name:
+                                _action = "model"
+                    except Exception:
+                        _action = None
+'''
+patch(
+    "rdagent/utils/workflow/loop.py",
+    _P66_ACTION_OLD,
+    _P66_ACTION_NEW,
+    "P66 resolve factor/model action reliably in time-budget guard",
+)
+
 print("All rdagent patches applied.", flush=True)

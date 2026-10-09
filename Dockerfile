@@ -81,6 +81,11 @@ RUN uv pip install --system "mlflow==2.22.2"
 # deliberately omitted (verified via uv pip install --dry-run).
 RUN uv pip install --system torch --index-url https://download.pytorch.org/whl/cpu
 
+# Runtime smoke test after the full Python/Qlib/PyArrow stack is installed. This
+# deliberately deletes a Qlib workspace and verifies resume rehydration + parquet write.
+COPY web-extras/validate-runtime-regressions.py /tmp/web-extras/validate-runtime-regressions.py
+RUN python3 /tmp/web-extras/validate-runtime-regressions.py /app/RD-Agent
+
 # Built Vue frontend served by the Flask log server
 COPY --from=frontend /src/git_ignore_folder/static /app/RD-Agent/git_ignore_folder/static
 

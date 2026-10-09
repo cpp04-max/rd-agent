@@ -50,6 +50,22 @@ checks = {
     "legacy_stale_qrun_migration":
         "_resume_legacy_stale_qrun_state" in server
         and "legacy_stale_qrun_repair" in server,
+    "workspace_materialization_method":
+        "def ensure_materialized(self)" in workspace,
+    "factor_runner_materializes_before_write":
+        "exp.experiment_workspace.ensure_materialized()" in factor_runner
+        and factor_runner.find("ensure_materialized()") < factor_runner.find("to_parquet("),
+    "model_runner_materializes_before_write":
+        "exp.experiment_workspace.ensure_materialized()" in model_runner
+        and model_runner.find("ensure_materialized()") < model_runner.find("to_parquet("),
+    "all_factor_parquet_writes_guarded":
+        factor_runner.count('target_path.parent.mkdir(parents=True, exist_ok=True)')
+        >= factor_runner.count("to_parquet(target_path"),
+    "all_model_parquet_writes_guarded":
+        model_runner.count('target_path.parent.mkdir(parents=True, exist_ok=True)')
+        >= model_runner.count("to_parquet(target_path"),
+    "budget_action_fallback":
+        '_candidate_name = type(_candidate).__name__.lower()' in loop,
 }
 
 failed = [name for name, ok in checks.items() if not ok]
