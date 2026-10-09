@@ -3116,7 +3116,8 @@ _P67_REASON_OLD = '''    if "qrun_exit_code=124" in lower or "timed out" in lowe
             "Execution failed: the Qlib run timed out before producing a complete "
             "backtest result. Retry/repair the execution before evaluating the hypothesis."
         )
-    return (
+    if (
+        isinstance(exc, (FactorEmptyError, ModelEmptyError))
 '''
 _P67_REASON_NEW = '''    if "qrun_exit_code=124" in lower or "timed out" in lower or "running time exceeds" in lower:
         return (
@@ -3132,7 +3133,8 @@ _P67_REASON_NEW = '''    if "qrun_exit_code=124" in lower or "timed out" in lowe
             "output could be written. Retry from the coding checkpoint; the workspace "
             "will be re-materialized before the runner writes any files."
         )
-    return (
+    if (
+        isinstance(exc, (FactorEmptyError, ModelEmptyError))
 '''
 patch(
     "rdagent/app/qlib_rd_loop/quant.py",
