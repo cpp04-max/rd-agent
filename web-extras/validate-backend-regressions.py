@@ -47,6 +47,9 @@ checks = {
     "secret_redaction":
         "[REDACTED]" in litellm
         and 'logger.info(f"{LITELLM_SETTINGS}")' not in litellm,
+    "legacy_stale_qrun_migration":
+        "_resume_legacy_stale_qrun_state" in server
+        and "legacy_stale_qrun_repair" in server,
 }
 
 failed = [name for name, ok in checks.items() if not ok]

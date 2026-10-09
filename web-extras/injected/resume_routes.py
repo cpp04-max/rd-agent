@@ -149,6 +149,81 @@ def _resume_execution_failure_retry_step(checkpoint_path: Path):
     return retry_step or "coding"
 
 
+def _resume_legacy_stale_qrun_state(trace_dir: Path):
+    """Detect old loops whose Qlib execution was silently served from LocalEnv cache.
+
+    P61 adds FRESH_QRUN markers and disables the cache. For traces created before P61,
+    the tell-tale pattern is a running step that logs "Experiment execution ..." and
+    reaches feedback without any actual qrun LocalEnv execution in between.
+    """
+    import re as _re
+
+    stdout_path = trace_dir.parent / f"{trace_dir.name}.log"
+    if not stdout_path.exists():
+        return None
+
+    try:
+        text = stdout_path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return None
+
+    start_re = _re.compile(r"Start Loop (\d+), Step 2: running")
+    starts = list(start_re.finditer(text))
+    if not starts:
+        return None
+
+    suspicious = []
+    for index, match in enumerate(starts):
+        loop_index = int(match.group(1))
+        end = starts[index + 1].start() if index + 1 < len(starts) else len(text)
+        segment = text[match.start():end]
+
+        feedback_marker = f"Start Loop {loop_index}, Step 3: feedback"
+        feedback_pos = segment.find(feedback_marker)
+        if feedback_pos < 0:
+            continue
+        segment = segment[:feedback_pos]
+
+        if "Experiment execution ..." not in segment:
+            continue
+
+        normalized = " ".join(segment.split())
+        fresh_marker = "[rd-agent] FRESH_QRUN " in segment
+        local_qrun = (
+            "LocalEnv Logs Begin" in segment
+            and (
+                " qrun " in normalized
+                or " qrun conf_" in normalized
+                or "qrun conf_" in normalized
+            )
+        )
+        qrun_failure = (
+            "qrun_exit_code=" in segment
+            or "missing_qrun_config=" in segment
+            or "Failed to run this experiment" in segment
+        )
+
+        # Explicit execution failures are handled by the existing retry logic.
+        # This detector is only for silent stale-cache success.
+        if not fresh_marker and not local_qrun and not qrun_failure:
+            suspicious.append(loop_index)
+
+    if not suspicious:
+        return None
+
+    first_loop = min(suspicious)
+    return {
+        "loop_index": first_loop,
+        "loop_number": first_loop + 1,
+        "reason": (
+            "Legacy stale Qlib cache detected: this loop reached feedback after "
+            "'Experiment execution' without launching qrun. Results from this loop "
+            "and later loops are not scientifically valid and must be recomputed."
+        ),
+        "suspicious_loops": sorted(set(suspicious)),
+    }
+
+
 def _history_experiment_records():
     """Return Finance Whole Pipeline experiments newest-first with activity timestamps."""
     scenario_dir = log_folder_path / "Finance Whole Pipeline"
@@ -303,6 +378,7 @@ def resume_options():
         ), 200
 
     latest = records[-1]
+    legacy_stale_qrun = _resume_legacy_stale_qrun_state(source_dir)
 
     # Present one intuitive checkpoint per loop for the normal UI. Prefer the
     # completed "record" checkpoint; if the loop is partial, use its latest
@@ -340,24 +416,55 @@ def resume_options():
             )
 
         selected = retry_checkpoint or completed or candidates[-1]
+
+        legacy_invalid = bool(
+            legacy_stale_qrun
+            and loop_index >= int(legacy_stale_qrun["loop_index"])
+        )
+        if (
+            legacy_stale_qrun
+            and loop_index == int(legacy_stale_qrun["loop_index"])
+        ):
+            legacy_retry = next(
+                (
+                    item
+                    for item in reversed(candidates)
+                    if item["step_name"] == "coding"
+                ),
+                None,
+            )
+            if legacy_retry is not None:
+                selected = legacy_retry
+
         loop_checkpoints.append(
             {
                 **selected,
                 "complete": completed is not None,
                 "execution_failed": bool(execution_failure_reason),
                 "failure_reason": execution_failure_reason,
+                "legacy_stale_qrun": legacy_invalid,
+                "scientifically_valid": not legacy_invalid,
                 "label": (
-                    f"Loop {selected['loop_number']} · execution failed · retry run"
-                    if execution_failure_reason and retry_checkpoint is not None
+                    f"Loop {selected['loop_number']} · stale cached backtest · retry run"
+                    if legacy_invalid
+                    and loop_index == int(legacy_stale_qrun["loop_index"])
                     else (
-                        f"Loop {selected['loop_number']} · execution failed"
-                        if execution_failure_reason
+                        f"Loop {selected['loop_number']} · invalid after stale cached backtest"
+                        if legacy_invalid
                         else (
-                            f"Loop {selected['loop_number']} · completed"
-                            if completed is not None
+                            f"Loop {selected['loop_number']} · execution failed · retry run"
+                            if execution_failure_reason and retry_checkpoint is not None
                             else (
-                                f"Loop {selected['loop_number']} · partial "
-                                f"(after {selected['step_name']})"
+                                f"Loop {selected['loop_number']} · execution failed"
+                                if execution_failure_reason
+                                else (
+                                    f"Loop {selected['loop_number']} · completed"
+                                    if completed is not None
+                                    else (
+                                        f"Loop {selected['loop_number']} · partial "
+                                        f"(after {selected['step_name']})"
+                                    )
+                                )
                             )
                         )
                     )
@@ -383,6 +490,7 @@ def resume_options():
             "loop_checkpoints": loop_checkpoints,
             "checkpoints": records,
             "resume_meta": resume_meta,
+            "legacy_stale_qrun": legacy_stale_qrun,
         }
     ), 200
 
@@ -433,9 +541,32 @@ def resume_trace():
         ), 409
 
     auto_retry_execution = False
+    auto_retry_legacy_cache = False
+    legacy_stale_qrun = _resume_legacy_stale_qrun_state(source_dir)
+
     if checkpoint_key == "latest":
         selected = records[-1]
-        if selected["step_name"] == "record":
+
+        # P64: traces produced before P61 can contain scientifically invalid loops
+        # whose qrun was silently served from LocalEnv cache. Rewind automatically
+        # to the first affected loop's coding checkpoint.
+        if legacy_stale_qrun:
+            first_bad_loop = int(legacy_stale_qrun["loop_index"])
+            retry_checkpoint = next(
+                (
+                    item
+                    for item in reversed(records)
+                    if item["loop_index"] == first_bad_loop
+                    and item["step_name"] == "coding"
+                ),
+                None,
+            )
+            if retry_checkpoint is not None:
+                selected = retry_checkpoint
+                auto_retry_execution = True
+                auto_retry_legacy_cache = True
+
+        if not auto_retry_legacy_cache and selected["step_name"] == "record":
             execution_failure_reason = _resume_execution_failure_reason(Path(selected["path"]))
             if execution_failure_reason:
                 retry_checkpoint = next(
@@ -454,6 +585,27 @@ def resume_trace():
         selected = next((r for r in records if r["key"] == checkpoint_key), None)
         if selected is None:
             return jsonify({"error": "Requested checkpoint was not found"}), 404
+
+        if legacy_stale_qrun:
+            first_bad_loop = int(legacy_stale_qrun["loop_index"])
+            invalid_selection = (
+                selected["loop_index"] > first_bad_loop
+                or (
+                    selected["loop_index"] == first_bad_loop
+                    and selected["step_name"] not in {"direct_exp_gen", "coding"}
+                )
+            )
+            if invalid_selection:
+                return jsonify(
+                    {
+                        "error": (
+                            f"Loop {first_bad_loop + 1} and later results were created "
+                            "with the legacy stale Qlib cache and are scientifically "
+                            "invalid. Resume from that loop's coding checkpoint instead."
+                        ),
+                        "legacy_stale_qrun": legacy_stale_qrun,
+                    }
+                ), 409
 
     source_name = source_dir.name
     suffix = randomname.get_name()
@@ -497,6 +649,7 @@ def resume_trace():
         "additional_loops": additional_loops,
         "all_duration_hours": duration_hours,
         "instruction_override": instruction or None,
+        "legacy_stale_qrun_repair": legacy_stale_qrun if auto_retry_legacy_cache else None,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     (dest_dir / "_resume_meta.json").write_text(_json.dumps(meta, indent=2), encoding="utf-8")
@@ -580,5 +733,8 @@ def resume_trace():
             "resume_start_loop_number": resume_start_loop_number,
             "additional_loops": additional_loops,
             "all_duration": duration_hours,
+            "legacy_stale_qrun_repair": (
+                legacy_stale_qrun if auto_retry_legacy_cache else None
+            ),
         }
     ), 200
