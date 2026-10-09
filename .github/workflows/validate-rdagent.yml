@@ -52,4 +52,10 @@ jobs:
         shell: bash
         run: |
           set -euxo pipefail
-          docker build --progress=plain -t rd-agent-validation .
+          # Docker Hub rate-limits hosted CI runners. Use the public ECR mirror only
+          # for CI source resolution; the production Dockerfile itself is unchanged.
+          sed \
+            -e 's|FROM node:22-alpine AS frontend|FROM public.ecr.aws/docker/library/node:22-alpine AS frontend|' \
+            -e 's|FROM python:3.10-slim|FROM public.ecr.aws/docker/library/python:3.10-slim|' \
+            Dockerfile > Dockerfile.ci
+          docker build --progress=plain -f Dockerfile.ci -t rd-agent-validation .
