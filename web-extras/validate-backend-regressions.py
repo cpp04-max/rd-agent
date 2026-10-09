@@ -77,6 +77,15 @@ checks = {
     "workspace_crash_resume_rewind":
         "_resume_terminal_workspace_crash_state" in server
         and "terminal_workspace_crash_repair" in server,
+    "recursive_result_inheritance":
+        "_resume_parent_result_messages(" in server
+        and "_visited: set[str] | None = None" in server
+        and "_depth + 1" in server
+        and "continuation ancestry cycle detected" in server,
+    "qrun_timeout_configurable":
+        "RDAGENT_QRUN_TIMEOUT_SECONDS" in workspace
+        and 'running_timeout_period=_qrun_timeout' in workspace
+        and 'timeout={getattr(qtde.conf, \'running_timeout_period\', None)}s' in workspace,
 }
 
 failed = [name for name, ok in checks.items() if not ok]

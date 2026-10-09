@@ -3182,4 +3182,206 @@ patch(
     "P67 render actionable missing-workspace failure reason",
 )
 
+
+# ---------------------------------------------------------------- P69 recursive continuation RESULT inheritance
+# P59 inherited RESULT events from only the immediate source trace. After several
+# Continue/Retry/Branch generations, the immediate parent may itself rely on inherited
+# RESULT rows that are not physically present in its local FileStorage. Resolve the
+# ancestry recursively, while applying every checkpoint boundary and guarding cycles.
+patch(
+    "rdagent/log/server/app.py",
+    "def _resume_parent_result_messages(trace_dir: Path):\n    import json as _json\n",
+    "def _resume_parent_result_messages(\\n"
+    "    trace_dir: Path,\\n"
+    "    _visited: set[str] | None = None,\\n"
+    "    _depth: int = 0,\\n"
+    "):\\n"
+    "    import json as _json\\n\\n"
+    "    if _visited is None:\\n"
+    "        _visited = set()\\n"
+    "    if _depth >= 32:\\n"
+    "        return [], {\\n"
+    '            "available": False,\\n'
+    '            "reason": "continuation ancestry exceeds 32 levels",\\n'
+    '            "ancestry_depth": _depth,\\n'
+    "        }\\n"
+    "    _trace_key = str(trace_dir.resolve())\\n"
+    "    if _trace_key in _visited:\\n"
+    "        return [], {\\n"
+    '            "available": False,\\n'
+    '            "reason": "continuation ancestry cycle detected",\\n'
+    '            "ancestry_depth": _depth,\\n'
+    "        }\\n"
+    "    _visited.add(_trace_key)\\n",
+    "P69 add bounded recursive RESULT ancestry state",
+)
+
+_P69_PARENT_DIRECT_OLD = '''    parent_messages = []
+    try:
+        parent_messages = _collect_live_result_messages(source_dir, str(source_dir))
+    except Exception:
+        app.logger.exception(
+            "Failed to replay source RESULT while continuing %s from %s",
+            trace_dir,
+            source_dir,
+        )
+        parent_messages = []
+
+    # If disk compatibility replay yields nothing, use the already-loaded source task
+    # as a second path. This protects older traces whose persisted Python objects are
+    # only readable through the server's existing replayed UI messages.
+    if not parent_messages:
+        source_task = rdagent_processes.get(str(source_dir))
+        if source_task is not None and isinstance(source_task.messages, list):
+            parent_messages = [
+                msg
+                for msg in source_task.messages
+                if isinstance(msg, dict)
+                and msg.get("tag")
+                in {
+                    "research.hypothesis",
+                    "feedback.metric",
+                    "feedback.hypothesis_feedback",
+                }
+            ]
+
+    filtered = []
+'''
+_P69_PARENT_DIRECT_NEW = '''    # First resolve the source trace's own inherited ancestry. Then append the
+    # source trace's direct durable/live RESULT events so the nearest generation wins
+    # if the same loop exists in multiple generations.
+    ancestor_messages = []
+    try:
+        ancestor_messages, _ = _resume_parent_result_messages(
+            source_dir,
+            _visited,
+            _depth + 1,
+        )
+    except Exception:
+        app.logger.exception(
+            "Failed to resolve RESULT ancestry for %s while continuing %s",
+            source_dir,
+            trace_dir,
+        )
+        ancestor_messages = []
+
+    source_direct_messages = []
+    try:
+        source_direct_messages = _collect_live_result_messages(
+            source_dir,
+            str(source_dir),
+        )
+    except Exception:
+        app.logger.exception(
+            "Failed to replay source RESULT while continuing %s from %s",
+            trace_dir,
+            source_dir,
+        )
+        source_direct_messages = []
+
+    # If disk compatibility replay yields nothing, use the already-loaded source task
+    # as a second path. This protects older traces whose persisted Python objects are
+    # only readable through the server's existing replayed UI messages.
+    if not source_direct_messages:
+        source_task = rdagent_processes.get(str(source_dir))
+        if source_task is not None and isinstance(source_task.messages, list):
+            source_direct_messages = [
+                msg
+                for msg in source_task.messages
+                if isinstance(msg, dict)
+                and msg.get("tag")
+                in {
+                    "research.hypothesis",
+                    "feedback.metric",
+                    "feedback.hypothesis_feedback",
+                }
+            ]
+
+    parent_messages = list(ancestor_messages)
+    parent_messages.extend(source_direct_messages)
+
+    filtered = []
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P69_PARENT_DIRECT_OLD,
+    _P69_PARENT_DIRECT_NEW,
+    "P69 recursively merge ancestor RESULT events",
+)
+
+_P69_INFO_OLD = '''        "created_at": meta.get("created_at"),
+    }
+
+
+def _filter_continuation_destination_messages(messages, continuation_source):
+'''
+_P69_INFO_NEW = '''        "created_at": meta.get("created_at"),
+        "ancestry_depth": _depth + 1,
+    }
+
+
+def _filter_continuation_destination_messages(messages, continuation_source):
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P69_INFO_OLD,
+    _P69_INFO_NEW,
+    "P69 expose RESULT ancestry depth",
+)
+
+
+# ---------------------------------------------------------------- P70 configurable fresh-qrun timeout
+# The CPU Qlib run in the current trace reached epoch 26/30 exactly when LocalEnv's
+# default 3600s timeout killed it. Keep timeouts/failure handling, but give a fresh
+# scientific backtest a realistic default two-hour window. This is isolated to the
+# Qlib experiment LocalEnv; factor code-generation helpers keep their existing limits.
+_P70_QRUN_ENV_OLD = '''                qtde = LocalEnv(
+                    conf=LocalConf(
+                        default_entry="python main.py",
+                        bin_path=os.environ.get("PATH", ""),
+                        enable_cache=False,
+                    )
+                )
+'''
+_P70_QRUN_ENV_NEW = '''                _qrun_timeout_raw = os.environ.get(
+                    "RDAGENT_QRUN_TIMEOUT_SECONDS",
+                    "7200",
+                ).strip()
+                _qrun_timeout = (
+                    None
+                    if _qrun_timeout_raw.lower() in {"", "0", "none"}
+                    else max(60, int(_qrun_timeout_raw))
+                )
+                qtde = LocalEnv(
+                    conf=LocalConf(
+                        default_entry="python main.py",
+                        bin_path=os.environ.get("PATH", ""),
+                        running_timeout_period=_qrun_timeout,
+                        enable_cache=False,
+                    )
+                )
+'''
+patch(
+    "rdagent/scenarios/qlib/experiment/workspace.py",
+    _P70_QRUN_ENV_OLD,
+    _P70_QRUN_ENV_NEW,
+    "P70 use configurable two-hour Qlib qrun timeout",
+)
+
+_P70_FRESH_LOG_OLD = '''            f"[rd-agent] FRESH_QRUN config={qlib_config_name} "
+            f"env_cache={getattr(qtde.conf, 'enable_cache', None)} "
+            f"workspace={self.workspace_path}"
+'''
+_P70_FRESH_LOG_NEW = '''            f"[rd-agent] FRESH_QRUN config={qlib_config_name} "
+            f"env_cache={getattr(qtde.conf, 'enable_cache', None)} "
+            f"timeout={getattr(qtde.conf, 'running_timeout_period', None)}s "
+            f"workspace={self.workspace_path}"
+'''
+patch(
+    "rdagent/scenarios/qlib/experiment/workspace.py",
+    _P70_FRESH_LOG_OLD,
+    _P70_FRESH_LOG_NEW,
+    "P70 log effective Qlib qrun timeout",
+)
+
 print("All rdagent patches applied.", flush=True)
