@@ -20,7 +20,9 @@ RUN git init -q /src \
 COPY web-extras/patch-frontend.js /tmp/patch-frontend.js
 COPY web-extras/patch-history-p56.js /tmp/patch-history-p56.js
 COPY web-extras/patch-route-p57.js /tmp/patch-route-p57.js
-RUN node /tmp/patch-frontend.js
+COPY web-extras/validate-frontend-regressions.js /tmp/validate-frontend-regressions.js
+RUN node /tmp/patch-frontend.js \
+ && node /tmp/validate-frontend-regressions.js
 WORKDIR /src/web
 RUN npm install --legacy-peer-deps --no-audit --no-fund \
  && npm run build:flask           # outputs to /src/git_ignore_folder/static
@@ -47,7 +49,9 @@ RUN git init -q /app/RD-Agent \
 # ./injected/ relative to itself.
 COPY web-extras/patch-rdagent.py /tmp/web-extras/patch-rdagent.py
 COPY web-extras/injected/ /tmp/web-extras/injected/
-RUN python3 /tmp/web-extras/patch-rdagent.py /app/RD-Agent
+COPY web-extras/validate-backend-regressions.py /tmp/web-extras/validate-backend-regressions.py
+RUN python3 /tmp/web-extras/patch-rdagent.py /app/RD-Agent \
+ && python3 /tmp/web-extras/validate-backend-regressions.py /app/RD-Agent
 WORKDIR /app/RD-Agent
 
 # Install rdagent + all runtime deps (uses uv for speed/reliability)

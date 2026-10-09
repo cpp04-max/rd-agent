@@ -2701,4 +2701,165 @@ patch(
     "P60 suppress stale copied future-loop RESULT events",
 )
 
+
+# ---------------------------------------------------------------- P61 fresh Qlib execution; no stale backtest cache
+# P3 falls back from QlibCondaEnv (whose cache is disabled upstream) to LocalEnv.
+# LocalConf defaults enable_cache=True, and Env.cached_run hashes only .py/.csv/.yaml
+# workspace files. Qlib's actual combined factor matrix is parquet and run_env is not
+# included in that cache key, so distinct experiments can silently reuse an older qrun
+# result. Disable LocalEnv execution caching specifically for Qlib workspaces.
+_P61_QLIB_LOCAL_CACHE_OLD = '''                qtde = LocalEnv(conf=LocalConf(default_entry="python main.py", bin_path=os.environ.get("PATH", "")))
+'''
+_P61_QLIB_LOCAL_CACHE_NEW = '''                qtde = LocalEnv(
+                    conf=LocalConf(
+                        default_entry="python main.py",
+                        bin_path=os.environ.get("PATH", ""),
+                        enable_cache=False,
+                    )
+                )
+'''
+patch(
+    "rdagent/scenarios/qlib/experiment/workspace.py",
+    _P61_QLIB_LOCAL_CACHE_OLD,
+    _P61_QLIB_LOCAL_CACHE_NEW,
+    "P61 disable stale LocalEnv cache for Qlib backtests",
+)
+
+# Runner-level pickle caching is also unsafe for research execution because its
+# upstream key is based on task descriptions, not generated implementation code,
+# market-data revisions, or runtime configuration. Keep lower-level code caches, but
+# always execute the aggregate Qlib factor/model experiment.
+_P61_RUNNER_CACHE_DECORATOR = '''    @cache_with_pickle(CachedRunner.get_cache_key, CachedRunner.assign_cached_result)
+'''
+for _runner_path in (
+    "rdagent/scenarios/qlib/developer/factor_runner.py",
+    "rdagent/scenarios/qlib/developer/model_runner.py",
+):
+    patch(
+        _runner_path,
+        _P61_RUNNER_CACHE_DECORATOR,
+        "",
+        f"P61 disable stale aggregate runner cache in {_runner_path.split('/')[-1]}",
+    )
+
+# Future logs must prove that qrun was really launched rather than silently replayed.
+_P61_FRESH_QRUN_OLD = '''        _qlib_run = qtde.run(
+            local_path=str(self.workspace_path),
+            entry=f"qrun {qlib_config_name}",
+            env=run_env,
+        )
+'''
+_P61_FRESH_QRUN_NEW = '''        logger.info(
+            f"[rd-agent] FRESH_QRUN config={qlib_config_name} "
+            f"env_cache={getattr(qtde.conf, 'enable_cache', None)} "
+            f"workspace={self.workspace_path}"
+        )
+        _qlib_run = qtde.run(
+            local_path=str(self.workspace_path),
+            entry=f"qrun {qlib_config_name}",
+            env=run_env,
+        )
+        logger.info(
+            f"[rd-agent] FRESH_QRUN_DONE config={qlib_config_name} "
+            f"exit_code={_qlib_run.exit_code} running_time={_qlib_run.running_time:.1f}s"
+        )
+'''
+patch(
+    "rdagent/scenarios/qlib/experiment/workspace.py",
+    _P61_FRESH_QRUN_OLD,
+    _P61_FRESH_QRUN_NEW,
+    "P61 log fresh qrun start/end",
+)
+
+
+# ---------------------------------------------------------------- P62 time-budget guard before expensive hypothesis generation
+patch(
+    "rdagent/app/qlib_rd_loop/quant.py",
+    "import asyncio\nfrom typing import Any",
+    "import asyncio\nimport os\nfrom typing import Any",
+    "P62 import os for pre-hypothesis time guard",
+)
+
+_P62_DIRECT_OLD = '''    async def direct_exp_gen(self, prev_out: dict[str, Any]):
+        if getattr(self, "_execution_failure_pending", None):
+            raise self.LoopTerminationError("Execution failure requires retry/repair")
+        while True:
+'''
+_P62_DIRECT_NEW = '''    async def direct_exp_gen(self, prev_out: dict[str, Any]):
+        if getattr(self, "_execution_failure_pending", None):
+            raise self.LoopTerminationError("Execution failure requires retry/repair")
+
+        _min_hypothesis_start_s = int(
+            os.environ.get("RDAGENT_MIN_HYPOTHESIS_START_SECONDS", "3600")
+        )
+        _remaining_before_hypothesis_s = self.timer.remain_time().total_seconds()
+        if _remaining_before_hypothesis_s < _min_hypothesis_start_s:
+            logger.warning(
+                f"Only {self.timer.remain_time()} left (< "
+                f"{_min_hypothesis_start_s}s); stopping before generating another "
+                "hypothesis that cannot be executed."
+            )
+            raise self.LoopTerminationError(
+                "Insufficient time to start another research loop"
+            )
+
+        while True:
+'''
+patch(
+    "rdagent/app/qlib_rd_loop/quant.py",
+    _P62_DIRECT_OLD,
+    _P62_DIRECT_NEW,
+    "P62 stop before expensive hypothesis generation when budget is too small",
+)
+
+patch(
+    "rdagent/utils/workflow/loop.py",
+    '_factor_min_s = int(os.environ.get("RDAGENT_MIN_FACTOR_LOOP_SECONDS", "1800"))',
+    '_factor_min_s = int(os.environ.get("RDAGENT_MIN_FACTOR_LOOP_SECONDS", "5400"))',
+    "P62 require a realistic 90-minute default budget for factor loops",
+)
+
+
+# ---------------------------------------------------------------- P63 factor-value cache follows source-data revisions
+_P63_FACTOR_HASH_OLD = '''    def hash_func(self, data_type: str = "Debug") -> str:
+        return (
+            md5_hash(data_type + self.file_dict["factor.py"])
+            if ("factor.py" in self.file_dict and not self.raise_exception)
+            else None
+        )
+'''
+_P63_FACTOR_HASH_NEW = '''    def hash_func(self, data_type: str = "Debug") -> str:
+        if "factor.py" not in self.file_dict or self.raise_exception:
+            return None
+
+        _data_fingerprint = ""
+        if self.target_task.version == 1:
+            _source_data_path = Path(
+                FACTOR_COSTEER_SETTINGS.data_folder_debug
+                if data_type == "Debug"
+                else FACTOR_COSTEER_SETTINGS.data_folder
+            )
+            _fingerprint_parts = []
+            for _name in ("daily_pv.h5", "README.md"):
+                _path = _source_data_path / _name
+                if _path.exists():
+                    _stat = _path.stat()
+                    _fingerprint_parts.append(
+                        f"{_name}:{_stat.st_size}:{_stat.st_mtime_ns}"
+                    )
+                else:
+                    _fingerprint_parts.append(f"{_name}:missing")
+            _data_fingerprint = "|".join(_fingerprint_parts)
+
+        return md5_hash(
+            data_type + self.file_dict["factor.py"] + _data_fingerprint
+        )
+'''
+patch(
+    "rdagent/components/coder/factor_coder/factor.py",
+    _P63_FACTOR_HASH_OLD,
+    _P63_FACTOR_HASH_NEW,
+    "P63 include qlib source-data fingerprint in factor execution cache",
+)
+
 print("All rdagent patches applied.", flush=True)
