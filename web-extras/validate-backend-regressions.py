@@ -25,7 +25,12 @@ litellm = read("rdagent/oai/backend/litellm.py")
 
 checks = {
     "qlib_local_cache_disabled": "enable_cache=False" in workspace,
-    "workspace_rehydration": "self.inject_files(**self.file_dict)" in workspace,
+    "workspace_rehydration": (
+        "def ensure_materialized(self)" in workspace
+        and "self.prepare()" in workspace
+        and "self.inject_files(**dict(self.file_dict))" in workspace
+        and "self.ensure_materialized()" in workspace
+    ),
     "fresh_qrun_start_marker": "[rd-agent] FRESH_QRUN config=" in workspace,
     "fresh_qrun_done_marker": "[rd-agent] FRESH_QRUN_DONE config=" in workspace,
     "qrun_exit_status": "qrun_exit_code=" in workspace,
