@@ -1,0 +1,53 @@
+name: Validate RD-Agent image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  patch-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout deployment repo
+        uses: actions/checkout@v4
+
+      - name: Fetch pinned upstream
+        shell: bash
+        run: |
+          set -euxo pipefail
+          git init -q /tmp/RD-Agent
+          git -C /tmp/RD-Agent remote add origin https://github.com/microsoft/RD-Agent.git
+          git -C /tmp/RD-Agent fetch -q --depth 1 origin 6762f84f9bc0f5c6486c50a00e128a57ac6c3683
+          git -C /tmp/RD-Agent checkout -q FETCH_HEAD
+
+      - name: Apply backend patches and regressions
+        shell: bash
+        run: |
+          set -euxo pipefail
+          python3 web-extras/patch-rdagent.py /tmp/RD-Agent
+          python3 web-extras/validate-backend-regressions.py /tmp/RD-Agent
+
+      - name: Apply frontend patches and regressions
+        shell: bash
+        run: |
+          set -euxo pipefail
+          cp web-extras/patch-frontend.js /tmp/patch-frontend.js
+          cp web-extras/patch-history-p56.js /tmp/patch-history-p56.js
+          cp web-extras/patch-route-p57.js /tmp/patch-route-p57.js
+          cp web-extras/validate-frontend-regressions.js /tmp/validate-frontend-regressions.js
+          cd /tmp/RD-Agent
+          node /tmp/patch-frontend.js
+          node /tmp/validate-frontend-regressions.js
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: patch-smoke
+    steps:
+      - name: Checkout deployment repo
+        uses: actions/checkout@v4
+      - name: Build production image
+        shell: bash
+        run: |
+          set -euxo pipefail
+          docker build --progress=plain -t rd-agent-validation .
