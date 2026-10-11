@@ -89,6 +89,13 @@ checks = {
         "RDAGENT_QRUN_TIMEOUT_SECONDS" in workspace
         and 'running_timeout_period=_qrun_timeout' in workspace
         and 'timeout={getattr(qtde.conf, \'running_timeout_period\', None)}s' in workspace,
+    "resume_trace_name_bounded":
+        "def _resume_child_trace_name" in server
+        and "max_bytes = 220" in server
+        and "_resume_child_trace_name(source_name, branch_kind, suffix)" in server,
+    "resume_copytree_error_visible":
+        "Failed to create continuation trace" in server
+        and "_shutil.copytree(source_dir, dest_dir)" in server,
 }
 
 failed = [name for name, ok in checks.items() if not ok]
@@ -189,4 +196,32 @@ with tempfile.TemporaryDirectory() as _tmp:
         raise SystemExit("RESULT ancestry cycle guard failed or duplicated invalid loops")
 
 print("[backend-regression] recursive continuation RESULT runtime: OK")
+# Execute the filesystem-safe continuation-name helper against the exact
+# pathological deep-chain length that previously exceeded Linux NAME_MAX.
+_name_node = next(
+    (
+        node for node in _server_tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_resume_child_trace_name"
+    ),
+    None,
+)
+if _name_node is None:
+    raise SystemExit("could not extract _resume_child_trace_name for runtime regression")
+_name_ns = {}
+exec(
+    compile(ast.Module(body=[_name_node], type_ignores=[]), "<resume-name-regression>", "exec"),
+    _name_ns,
+)
+_make_name = _name_ns["_resume_child_trace_name"]
+_long_source = "x" * 250
+_name_a = _make_name(_long_source, "cont", "freezing-beans")
+_name_b = _make_name(_long_source, "cont", "other-child")
+if len(_name_a.encode("utf-8")) > 220:
+    raise SystemExit("bounded continuation trace name exceeds 220 bytes")
+if len((_name_a + ".log").encode("utf-8")) > 255:
+    raise SystemExit("continuation stdout filename exceeds filesystem NAME_MAX")
+if _name_a == _name_b or "-src" not in _name_a:
+    raise SystemExit("compacted continuation trace names lost uniqueness/source hash")
+print("[backend-regression] bounded continuation trace naming: OK")
+
 print("[backend-regression] all checks passed")
