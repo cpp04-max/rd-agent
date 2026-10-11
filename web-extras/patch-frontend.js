@@ -3939,3 +3939,69 @@ resultS59 = resultS59.replace(stripCountP59Old, stripCountP59New);
 
 fs.writeFileSync(resultP59, resultS59);
 console.log("[patch-frontend] P59 continuation-aware RESULT inheritance applied");
+
+// ------------------------- P71: normalize resume API success/error contract -------------------------
+// request.js returns response.data for success but resolves error.response for HTTP
+// failures. Normalize only resumeTrace so existing API behavior elsewhere is untouched.
+const apiPathP71 = "/src/web/src/utils/api.js";
+let apiS71 = fs.readFileSync(apiPathP71, "utf8");
+const resumeApiP71Old = [
+  "export function resumeTrace(data) {",
+  "    return request({",
+  "        url: url + \"resume\",",
+  "        method: \"post\",",
+  "        headers: {",
+  "            \"Content-Type\": \"application/json\"",
+  "        },",
+  "        data: data",
+  "    });",
+  "}",
+  "",
+].join("\n");
+const resumeApiP71New = [
+  "export async function resumeTrace(data) {",
+  "    const response = await request({",
+  "        url: url + \"resume\",",
+  "        method: \"post\",",
+  "        headers: {",
+  "            \"Content-Type\": \"application/json\"",
+  "        },",
+  "        data: data",
+  "    });",
+  "",
+  "    if (",
+  "        response &&",
+  "        typeof response === \"object\" &&",
+  "        Number(response.status) >= 400 &&",
+  "        response.data &&",
+  "        typeof response.data === \"object\"",
+  "    ) {",
+  "        const message =",
+  "            response.data.error ||",
+  "            (\"Resume request failed with HTTP \" + response.status + \".\");",
+  "        const error = new Error(message);",
+  "        error.response = response;",
+  "        throw error;",
+  "    }",
+  "",
+  "    if (",
+  "        response &&",
+  "        typeof response === \"object\" &&",
+  "        response.data &&",
+  "        typeof response.data === \"object\" &&",
+  "        (response.data.id || response.data.error)",
+  "    ) {",
+  "        return response.data;",
+  "    }",
+  "",
+  "    return response;",
+  "}",
+  "",
+].join("\n");
+if (!apiS71.includes(resumeApiP71Old)) {
+  console.error("[patch-frontend] FAILED: P71 resumeTrace API anchor drifted.");
+  process.exit(1);
+}
+apiS71 = apiS71.replace(resumeApiP71Old, resumeApiP71New);
+fs.writeFileSync(apiPathP71, apiS71);
+console.log("[patch-frontend] P71 resume API success/error normalization applied");
