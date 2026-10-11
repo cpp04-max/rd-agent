@@ -6,6 +6,7 @@ function read(path) {
 const playground = read("/src/web/src/views/Playground.vue");
 const playgroundPage = read("/src/web/src/views/PlaygroundPage.vue");
 const result = read("/src/web/src/views/ResultPage.vue");
+const api = read("/src/web/src/utils/api.js");
 const checks = {
   keyedPlaygroundPage: playground.includes(':key="id"'),
   reactiveContinuationRoute: playground.includes("route.query.trace") && playground.includes("applyDeepTrace"),
@@ -14,6 +15,7 @@ const checks = {
   terminalFailureCard: result.includes("liveResultFailure") && result.includes("execution-failure-summary"),
   inheritedContinuationResults: result.includes("liveResultInheritedCount") && result.includes("inherited from source experiment"),
   terminalAwarePolling: result.includes("if (!liveResultTerminal.value)"),
+  resumeApiErrorNormalization: api.includes("Number(response.status) >= 400") && api.includes("error.response = response") && api.includes("return response.data"),
 };
 const failed = Object.entries(checks).filter((item) => !item[1]).map((item) => item[0]);
 for (const item of Object.entries(checks)) {
