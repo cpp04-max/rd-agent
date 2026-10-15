@@ -238,3 +238,78 @@ with tempfile.TemporaryDirectory() as tmp:
     assert cfg["split"]["test_start"] == "2024-01-01"
 
 print("[runtime-regression] modern CSI300 Qlib provider + custom field readback: OK")
+
+
+# P75 coverage: suspension days must survive even though the daily-price endpoint
+# omits them; intraday index bars must aggregate into stable daily context features.
+price = pd.DataFrame(
+    {
+        "trade_date": ["20240102", "20240104"],
+        "open": [10.0, 10.8],
+        "close": [10.2, 11.0],
+        "high": [10.4, 11.2],
+        "low": [9.9, 10.6],
+        "vol": [1000.0, 1200.0],
+        "amount": [10000.0, 13200.0],
+        "factor_norm": [1.0, 1.0],
+    }
+)
+status = pd.DataFrame(
+    {
+        "ts_code": ["600000.SH"],
+        "trade_date": ["20240103"],
+        "suspend_timing": [""],
+        "suspend_type": ["S"],
+    }
+)
+status_panel = modern_data._stock_panel(
+    "600000.SH",
+    ["price_volume", "trading_status"],
+    {
+        "price_volume": {"600000.SH": price},
+        "trading_status": {"600000.SH": status},
+    },
+    None,
+    None,
+    None,
+    None,
+)
+suspended = status_panel.loc[
+    status_panel["datetime"].eq(pd.Timestamp("2024-01-03"))
+].iloc[0]
+assert suspended["$is_suspended"] == 1.0
+assert pd.isna(suspended["$close"]), "suspended date unexpectedly has a price"
+
+bars = pd.DataFrame(
+    {
+        "ts_code": ["000300.SH"] * 8,
+        "trade_time": [
+            "2024-01-02 14:25:00",
+            "2024-01-02 14:30:00",
+            "2024-01-02 14:35:00",
+            "2024-01-02 14:40:00",
+            "2024-01-02 14:45:00",
+            "2024-01-02 14:50:00",
+            "2024-01-02 14:55:00",
+            "2024-01-02 15:00:00",
+        ],
+        "open": [3500, 3501, 3502, 3503, 3504, 3505, 3506, 3507],
+        "close": [3501, 3502, 3503, 3504, 3505, 3506, 3507, 3508],
+        "high": [3502, 3503, 3504, 3505, 3506, 3507, 3508, 3509],
+        "low": [3499, 3500, 3501, 3502, 3503, 3504, 3505, 3506],
+        "vol": [100, 110, 120, 130, 140, 150, 160, 170],
+        "amount": [350000, 385000, 420000, 455000, 490000, 525000, 560000, 595000],
+    }
+)
+intraday = modern_data._build_intraday_market_context(bars)
+assert len(intraday) == 1
+for field in (
+    "$idx5m_rv",
+    "$idx5m_range",
+    "$idx5m_last30",
+    "$idx5m_last_hour_vol_share",
+):
+    assert field in intraday.columns and pd.notna(intraday.iloc[0][field]), field
+assert intraday.iloc[0]["$idx5m_rv"] >= 0.0
+
+print("[runtime-regression] suspension preservation + intraday market aggregation: OK")

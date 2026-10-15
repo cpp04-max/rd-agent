@@ -128,15 +128,18 @@ checks = {
         and "qlib_provider_uri" in model_baseline,
     "modern_feature_families":
         all(name in modern_data for name in (
-            "price_volume", "csi300_membership", "daily_basic", "industry",
-            "market_context", "if_futures", "fundamentals", "money_flow",
-            "margin", "northbound",
+            "price_volume", "csi300_membership", "daily_basic", "trading_status",
+            "industry", "market_context", "intraday_market", "if_futures",
+            "fundamentals", "money_flow", "margin", "northbound",
         )),
     "point_in_time_guards":
         'fi["ann_date"]' in modern_data
         and '"in_date"' in modern_data
         and '"out_date"' in modern_data
-        and "index_weight" in modern_data,
+        and "index_weight" in modern_data
+        and "suspend_d" in modern_data
+        and "idx_mins" in modern_data
+        and "stock_hsgt" in modern_data,
     "modern_split":
         '"train_end": "2021-12-31"' in modern_data
         and '"valid_end": "2023-12-31"' in modern_data

@@ -3992,13 +3992,15 @@ Modern CSI300 runs may additionally contain the selected point-in-time families:
 
 - $csi300_weight: historical CSI300 constituent weight.
 - $db_*: daily valuation, liquidity, shares and market-cap variables.
+- $is_suspended: explicit suspension-day flag with NaN price fields.
 - $industry_*: point-in-time Shenwan L1 industry context.
 - $mkt_*: CSI300 market-return / volatility context.
+- $idx5m_*: daily features derived from CSI300 5-minute bars.
 - $if_*: CSI300 IF futures context.
 - $fi_*: financial indicators available only from announcement date onward.
 - $mf_*: stock money-flow ratios.
 - $margin_*: financing / securities-lending variables.
-- $north_*: northbound holding variables when the endpoint is available.
+- $north_*: northbound eligibility and holding variables when available.
 
 Generated factor code should use only columns present in the HDF file and must not
 forward-fill information before its first observed or announcement date.

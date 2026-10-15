@@ -26,6 +26,7 @@ const checks = {
   datasetRequiredFamilies: playground.includes(":disabled=\"family.required\""),
   datasetPresets: playground.includes("Recommended") && playground.includes("Select all"),
   datasetCatalogLoadedOnMount: playground.includes("void loadDatasetCatalog();"),
+  datasetPermissionHints: playground.includes("family.permission") && playground.includes("Tushare points"),
 };
 const failed = Object.entries(checks).filter((item) => !item[1]).map((item) => item[0]);
 for (const item of Object.entries(checks)) {
