@@ -149,6 +149,10 @@ checks = {
     "custom_qlib_binary_writer":
         "def _write_bin_provider(" in modern_data
         and "np.hstack([np.float32(start_index), values])" in modern_data,
+    "dataset_scoped_factor_cache":
+        "FACTOR_COSTEER_DATA_FOLDER" in modern_data
+        and "FACTOR_COSTEER_DATA_FOLDER_DEBUG" in modern_data
+        and '"factor_source"' in modern_data,
 }
 
 failed = [name for name, ok in checks.items() if not ok]
