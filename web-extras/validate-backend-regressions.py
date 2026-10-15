@@ -96,6 +96,9 @@ checks = {
     "resume_copytree_error_visible":
         "Failed to create continuation trace" in server
         and "_shutil.copytree(source_dir, dest_dir)" in server,
+    "frozen_result_inheritance":
+        "_resume_inherited_results.json" in server
+        and '_source_info["frozen"] = True' in server,
 }
 
 failed = [name for name, ok in checks.items() if not ok]
@@ -183,6 +186,25 @@ with tempfile.TemporaryDirectory() as _tmp:
         )
     if any(row["loop_id"] == 2 for row in _rows):
         raise SystemExit("checkpoint filtering resurrected a post-branch RESULT loop")
+
+    # Freeze the resolved ancestry, then force direct ancestry replay to fail.
+    # The child must still serve the same rows from its durable snapshot.
+    _frozen_path = _leaf / "_resume_inherited_results.json"
+    _frozen_path.write_text(json.dumps({
+        "messages": _messages,
+        "continuation_source": _info,
+    }))
+    _ns["_collect_live_result_messages"] = lambda *args, **kwargs: (_ for _ in ()).throw(
+        RuntimeError("synthetic ancestry replay failure")
+    )
+    _frozen_messages, _frozen_info = _inherit(_leaf)
+    _frozen_rows, _ = _snapshot(_frozen_messages)
+    if [row["loop_id"] for row in _frozen_rows] != [0, 1]:
+        raise SystemExit("frozen RESULT inheritance did not preserve ancestor rows")
+    if not _frozen_info.get("frozen"):
+        raise SystemExit("frozen RESULT inheritance was not identified as frozen")
+    _frozen_path.unlink()
+    _ns["_collect_live_result_messages"] = _fake_collect
 
     # Create an ancestry cycle and verify it terminates without adding invalid rows.
     (_base / "_resume_meta.json").write_text(json.dumps({

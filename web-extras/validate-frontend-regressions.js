@@ -16,6 +16,8 @@ const checks = {
   inheritedContinuationResults: result.includes("liveResultInheritedCount") && result.includes("inherited from source experiment"),
   terminalAwarePolling: result.includes("if (!liveResultTerminal.value)"),
   resumeApiErrorNormalization: api.includes("Number(response.status) >= 400") && api.includes("error.response = response") && api.includes("return response.data"),
+  liveResultApiErrorNormalization: api.includes("Live RESULT request failed with HTTP") && api.includes("Live RESULT response is missing a loops array"),
+  monotonicLiveResultRows: result.includes("mergeLiveResultRows") && result.includes("mergeLiveResultRows(liveResultRows.value, snapshot.loops)"),
 };
 const failed = Object.entries(checks).filter((item) => !item[1]).map((item) => item[0]);
 for (const item of Object.entries(checks)) {

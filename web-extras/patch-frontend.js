@@ -4005,3 +4005,89 @@ if (!apiS71.includes(resumeApiP71Old)) {
 apiS71 = apiS71.replace(resumeApiP71Old, resumeApiP71New);
 fs.writeFileSync(apiPathP71, apiS71);
 console.log("[patch-frontend] P71 resume API success/error normalization applied");
+
+// ------------------------- P73: RESULT polls never erase last good snapshot -------------------------
+const apiPathP73 = "/src/web/src/utils/api.js";
+let apiS73 = fs.readFileSync(apiPathP73, "utf8");
+const liveApiP73Old = [
+  "export function getLiveResults(traceId) {",
+  "    const query = new URLSearchParams({ id: traceId });",
+  "    return request({",
+  "        url: url + \"result/live?\" + query.toString(),",
+  "        method: \"get\"",
+  "    });",
+  "}",
+  "",
+].join("\n");
+const liveApiP73New = [
+  "export async function getLiveResults(traceId) {",
+  "    const query = new URLSearchParams({ id: traceId });",
+  "    const response = await request({",
+  "        url: url + \"result/live?\" + query.toString(),",
+  "        method: \"get\"",
+  "    });",
+  "",
+  "    if (response && typeof response === \"object\" && Number(response.status) >= 400) {",
+  "        const payload = response.data && typeof response.data === \"object\" ? response.data : {};",
+  "        const error = new Error(payload.error || (\"Live RESULT request failed with HTTP \" + response.status + \".\"));",
+  "        error.response = response;",
+  "        throw error;",
+  "    }",
+  "    if (response && response.data && typeof response.data === \"object\" && Array.isArray(response.data.loops)) {",
+  "        return response.data;",
+  "    }",
+  "    if (!response || !Array.isArray(response.loops)) {",
+  "        throw new Error(\"Live RESULT response is missing a loops array.\");",
+  "    }",
+  "    return response;",
+  "}",
+  "",
+].join("\n");
+if (!apiS73.includes(liveApiP73Old)) {
+  console.error("[patch-frontend] FAILED: P73 getLiveResults API anchor drifted.");
+  process.exit(1);
+}
+apiS73 = apiS73.replace(liveApiP73Old, liveApiP73New);
+fs.writeFileSync(apiPathP73, apiS73);
+
+const resultP73 = "/src/web/src/views/ResultPage.vue";
+let resultS73 = fs.readFileSync(resultP73, "utf8");
+const scheduleP73Anchor = "const scheduleLiveResultPoll = (delay = 3500) => {";
+const mergeP73 = [
+  "const mergeLiveResultRows = (currentRows, incomingRows) => {",
+  "  const byLoop = new Map();",
+  "  for (const row of Array.isArray(currentRows) ? currentRows : []) {",
+  "    const loopId = Number(row?.loop_id);",
+  "    if (Number.isInteger(loopId)) byLoop.set(loopId, row);",
+  "  }",
+  "  for (const row of Array.isArray(incomingRows) ? incomingRows : []) {",
+  "    const loopId = Number(row?.loop_id);",
+  "    if (Number.isInteger(loopId)) byLoop.set(loopId, row);",
+  "  }",
+  "  return Array.from(byLoop.entries())",
+  "    .sort((a, b) => a[0] - b[0])",
+  "    .map((entry) => entry[1]);",
+  "};",
+  "",
+].join("\n");
+if (!resultS73.includes(scheduleP73Anchor)) {
+  console.error("[patch-frontend] FAILED: P73 live poll scheduling anchor drifted.");
+  process.exit(1);
+}
+resultS73 = resultS73.replace(scheduleP73Anchor, mergeP73 + scheduleP73Anchor);
+const rowsP73Old = "    liveResultRows.value = Array.isArray(snapshot?.loops) ? snapshot.loops : [];";
+const rowsP73New = [
+  "    if (!Array.isArray(snapshot?.loops)) {",
+  "      throw new Error(\"Live RESULT snapshot is malformed.\");",
+  "    }",
+  "    // Rows are monotonic within one trace: a transient API/replay failure must",
+  "    // never erase results that were already displayed successfully.",
+  "    liveResultRows.value = mergeLiveResultRows(liveResultRows.value, snapshot.loops);",
+].join("\n");
+if (!resultS73.includes(rowsP73Old)) {
+  console.error("[patch-frontend] FAILED: P73 live rows assignment anchor drifted.");
+  process.exit(1);
+}
+resultS73 = resultS73.replace(rowsP73Old, rowsP73New);
+fs.writeFileSync(resultP73, resultS73);
+console.log("[patch-frontend] P73 monotonic live RESULT polling applied");

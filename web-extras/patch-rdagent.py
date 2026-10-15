@@ -3390,4 +3390,44 @@ patch(
     "P70 log effective Qlib qrun timeout",
 )
 
+
+# ---------------------------------------------------------------- P73 durable inherited RESULT snapshot
+# P69 recursively replayed every ancestor trace on every /result/live poll. On deep
+# continuation chains this becomes expensive and transient FileStorage replay failures
+# can make the UI appear to lose previously visible rows. Continuation inheritance is
+# immutable at branch creation, so prefer the durable snapshot written by /resume.
+_P73_PARENT_SNAPSHOT_OLD = '''    import json as _json
+
+    if _visited is None:
+'''
+_P73_PARENT_SNAPSHOT_NEW = '''    import json as _json
+
+    _frozen_path = trace_dir / "_resume_inherited_results.json"
+    if _frozen_path.exists():
+        try:
+            _frozen = _json.loads(_frozen_path.read_text(encoding="utf-8"))
+            _messages = _frozen.get("messages")
+            _source = _frozen.get("continuation_source")
+            if isinstance(_messages, list) and (
+                _source is None or isinstance(_source, dict)
+            ):
+                _source_info = dict(_source or {})
+                _source_info["frozen"] = True
+                return list(_messages), _source_info
+        except Exception:
+            app.logger.exception(
+                "Failed to read frozen inherited RESULT snapshot for %s; "
+                "falling back to ancestry replay",
+                trace_dir,
+            )
+
+    if _visited is None:
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P73_PARENT_SNAPSHOT_OLD,
+    _P73_PARENT_SNAPSHOT_NEW,
+    "P73 prefer durable inherited RESULT snapshot",
+)
+
 print("All rdagent patches applied.", flush=True)

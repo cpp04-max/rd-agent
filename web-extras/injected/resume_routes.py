@@ -802,6 +802,17 @@ def resume_trace():
             }
         ), 500
 
+    # A copied source continuation may already carry its own frozen inheritance
+    # snapshot. It describes the source boundary, not this new child boundary.
+    inherited_snapshot_path = dest_dir / "_resume_inherited_results.json"
+    try:
+        inherited_snapshot_path.unlink(missing_ok=True)
+    except OSError:
+        app.logger.exception(
+            "Failed to remove copied inherited RESULT snapshot for %s",
+            dest_dir,
+        )
+
     checkpoint_path = dest_dir / "__session__" / str(selected["loop_index"]) / (
         f"{selected['step_index']}_{selected['step_name']}"
     )
@@ -828,6 +839,30 @@ def resume_trace():
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     (dest_dir / "_resume_meta.json").write_text(_json.dumps(meta, indent=2), encoding="utf-8")
+
+    # Source-loop RESULT rows are immutable for this continuation. Resolve once and
+    # persist them so /result/live does not recursively reopen every ancestor trace
+    # on every poll while the child is training.
+    try:
+        inherited_messages, inherited_source = _resume_parent_result_messages(dest_dir)
+        inherited_payload = {
+            "messages": inherited_messages,
+            "continuation_source": inherited_source,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        inherited_tmp = inherited_snapshot_path.with_suffix(".json.tmp")
+        inherited_tmp.write_text(
+            _json.dumps(inherited_payload, indent=2, default=str),
+            encoding="utf-8",
+        )
+        inherited_tmp.replace(inherited_snapshot_path)
+    except Exception:
+        # Keep continuation startup non-fatal for legacy/unusual traces. The live
+        # endpoint will fall back to recursive ancestry replay when no snapshot exists.
+        app.logger.exception(
+            "Failed to freeze inherited RESULT rows for continuation %s",
+            dest_dir,
+        )
 
     stdout_path = dest_dir.parent / f"{branch_name}.log"
     kwargs = {
