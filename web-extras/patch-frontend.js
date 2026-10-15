@@ -4222,9 +4222,9 @@ const pgP75 = "/src/web/src/views/Playground.vue";
 let pgS75 = fs.readFileSync(pgP75, "utf8");
 
 const importP75Old =
-  'import { getHistoryTraceIds, uploadFile } from "../utils/api";';
+  'import { getHistoryTraceIds, uploadFile, getResumeOptions, resumeTrace } from "../utils/api";';
 const importP75New =
-  'import { getDatasetCatalog, getHistoryTraceIds, uploadFile } from "../utils/api";';
+  'import { getDatasetCatalog, getHistoryTraceIds, uploadFile, getResumeOptions, resumeTrace } from "../utils/api";';
 if (!pgS75.includes(importP75Old)) {
   console.error("[patch-frontend] FAILED: P75 Playground API import anchor drifted.");
   process.exit(1);
