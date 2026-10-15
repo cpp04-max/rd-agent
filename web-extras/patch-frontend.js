@@ -4221,15 +4221,20 @@ fs.writeFileSync(apiPathP75, apiS75);
 const pgP75 = "/src/web/src/views/Playground.vue";
 let pgS75 = fs.readFileSync(pgP75, "utf8");
 
-const importP75Old =
-  'import { getHistoryTraceIds, uploadFile, getResumeOptions, resumeTrace } from "../utils/api";';
-const importP75New =
-  'import { getDatasetCatalog, getHistoryTraceIds, uploadFile, getResumeOptions, resumeTrace } from "../utils/api";';
-if (!pgS75.includes(importP75Old)) {
-  console.error("[patch-frontend] FAILED: P75 Playground API import anchor drifted.");
+const importMatchP75 = pgS75.match(
+  /import \\{([^}]+)\\} from "\\.\\.\\/utils\\/api";/
+);
+if (!importMatchP75) {
+  console.error("[patch-frontend] FAILED: P75 Playground API import not found.");
   process.exit(1);
 }
-pgS75 = pgS75.replace(importP75Old, importP75New);
+if (!importMatchP75[1].includes("getDatasetCatalog")) {
+  const existingNamesP75 = importMatchP75[1].trim();
+  pgS75 = pgS75.replace(
+    importMatchP75[0],
+    'import { getDatasetCatalog, ' + existingNamesP75 + ' } from "../utils/api";'
+  );
+}
 
 const stateP75Old =
   'const hourNumber = ref(6);\n' +
