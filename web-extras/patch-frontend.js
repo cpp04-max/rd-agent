@@ -4444,7 +4444,7 @@ const datasetUiP75 = [
   '                        </span>',
   '                        <small>{{ family.description }}</small>',
   '                        <span class="dataset-family-source">',
-  '                          {{ family.source }} · {{ family.required_points }}+ Tushare points',
+  '                          {{ family.source }} · {{ family.permission || (family.required_points + "+ Tushare points") }}',
   '                        </span>',
   '                      </span>',
   '                    </label>',
