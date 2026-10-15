@@ -4204,13 +4204,13 @@ const catalogApiAnchorP75 = "export function getHistoryTraceIds() {";
 const catalogApiInsertP75 = [
   "export function getDatasetCatalog() {",
   "    return request({",
-  "        url: url + \\"data/catalog\\",",
+  "        url: url + \"data/catalog\",",
   "        method: 'get'",
   "    })",
   "}",
   "",
   "export function getHistoryTraceIds() {",
-].join("\\n");
+].join("\n");
 if (!apiS75.includes(catalogApiAnchorP75)) {
   console.error("[patch-frontend] FAILED: P75 dataset catalog API anchor drifted.");
   process.exit(1);
@@ -4232,14 +4232,14 @@ if (!pgS75.includes(importP75Old)) {
 pgS75 = pgS75.replace(importP75Old, importP75New);
 
 const stateP75Old =
-  'const hourNumber = ref(6);\\n' +
+  'const hourNumber = ref(6);\n' +
   'const scenarioName = ref("");';
 const stateP75New =
-  'const hourNumber = ref(6);\\n' +
-  'const datasetCatalog = ref(null);\\n' +
-  'const datasetMode = ref("legacy");\\n' +
-  'const datasetFamilies = ref([]);\\n' +
-  'const datasetCatalogLoading = ref(false);\\n' +
+  'const hourNumber = ref(6);\n' +
+  'const datasetCatalog = ref(null);\n' +
+  'const datasetMode = ref("legacy");\n' +
+  'const datasetFamilies = ref([]);\n' +
+  'const datasetCatalogLoading = ref(false);\n' +
   'const scenarioName = ref("");';
 if (!pgS75.includes(stateP75Old)) {
   console.error("[patch-frontend] FAILED: P75 dataset state anchor drifted.");
@@ -4299,7 +4299,7 @@ const helpersP75 = [
   '};',
   '',
   helperAnchorP75,
-].join("\\n");
+].join("\n");
 if (!pgS75.includes(helperAnchorP75)) {
   console.error("[patch-frontend] FAILED: P75 dataset helper anchor drifted.");
   process.exit(1);
@@ -4307,19 +4307,19 @@ if (!pgS75.includes(helperAnchorP75)) {
 pgS75 = pgS75.replace(helperAnchorP75, helpersP75);
 
 const formP75Old =
-  '  formData.append("all_duration", hourNumber.value);\\n\\n' +
+  '  formData.append("all_duration", hourNumber.value);\n\n' +
   '  return formData;';
 const formP75New =
-  '  formData.append("all_duration", hourNumber.value);\\n' +
-  '  if (scenarioChecked.value?.name === "Finance Whole Pipeline") {\\n' +
-  '    formData.append(\\n' +
-  '      "dataset_config",\\n' +
-  '      JSON.stringify({\\n' +
-  '        mode: datasetMode.value,\\n' +
-  '        families: datasetMode.value === "modern" ? resolvedDatasetFamilies() : [],\\n' +
-  '      })\\n' +
-  '    );\\n' +
-  '  }\\n\\n' +
+  '  formData.append("all_duration", hourNumber.value);\n' +
+  '  if (scenarioChecked.value?.name === "Finance Whole Pipeline") {\n' +
+  '    formData.append(\n' +
+  '      "dataset_config",\n' +
+  '      JSON.stringify({\n' +
+  '        mode: datasetMode.value,\n' +
+  '        families: datasetMode.value === "modern" ? resolvedDatasetFamilies() : [],\n' +
+  '      })\n' +
+  '    );\n' +
+  '  }\n\n' +
   '  return formData;';
 if (!pgS75.includes(formP75Old)) {
   console.error("[patch-frontend] FAILED: P75 FormData anchor drifted.");
@@ -4327,7 +4327,7 @@ if (!pgS75.includes(formP75Old)) {
 }
 pgS75 = pgS75.replace(formP75Old, formP75New);
 
-const generateP75Old = 'const generate = () => {\\n  uploaDone.value = false;';
+const generateP75Old = 'const generate = () => {\n  uploaDone.value = false;';
 const generateP75New = [
   'const generate = () => {',
   '  uploaDone.value = false;',
@@ -4340,7 +4340,7 @@ const generateP75New = [
   '    ElMessage.error("Modern CSI300 data requires TUSHARE_TOKEN to be configured on the server.");',
   '    return;',
   '  }',
-].join("\\n");
+].join("\n");
 if (!pgS75.includes(generateP75Old)) {
   console.error("[patch-frontend] FAILED: P75 generate guard anchor drifted.");
   process.exit(1);
@@ -4352,7 +4352,7 @@ if (durationStartP75 < 0) {
   console.error("[patch-frontend] FAILED: P75 duration block missing.");
   process.exit(1);
 }
-const loopEndAnchorP75 = '\\n            </div>\\n            <div\\n              class="btn-main"';
+const loopEndAnchorP75 = '\n            </div>\n            <div\n              class="btn-main"';
 const loopEndP75 = pgS75.indexOf(loopEndAnchorP75, durationStartP75);
 if (loopEndP75 < 0) {
   console.error("[patch-frontend] FAILED: P75 loop-content end anchor drifted.");
@@ -4390,7 +4390,7 @@ const datasetUiP75 = [
   '                  </label>',
   '                </div>',
   '',
-  '                <div v-if="datasetMode === \\'modern\\'" class="dataset-modern-panel">',
+  '                <div v-if="datasetMode === \'modern\'" class="dataset-modern-panel">',
   '                  <div',
   '                    class="dataset-token-state"',
   '                    :class="{ ready: datasetCatalog?.token_configured }"',
@@ -4414,8 +4414,8 @@ const datasetUiP75 = [
   '                    </span>',
   '                  </div>',
   '                  <div class="dataset-preset-row">',
-  '                    <button type="button" @click="selectDatasetPreset(\\'recommended\\')">Recommended</button>',
-  '                    <button type="button" @click="selectDatasetPreset(\\'all\\')">Select all</button>',
+  '                    <button type="button" @click="selectDatasetPreset(\'recommended\')">Recommended</button>',
+  '                    <button type="button" @click="selectDatasetPreset(\'all\')">Select all</button>',
   '                  </div>',
   '                  <div class="dataset-family-grid">',
   '                    <label',
@@ -4446,17 +4446,17 @@ const datasetUiP75 = [
   '                  </p>',
   '                </div>',
   '              </div>',
-].join("\\n");
+].join("\n");
 pgS75 =
   pgS75.slice(0, loopEndP75) +
   datasetUiP75 +
   pgS75.slice(loopEndP75);
 
-const mountedP75Old = 'onMounted(() => {\\n  void buildHistoryTraceList();\\n});';
+const mountedP75Old = 'onMounted(() => {\n  void buildHistoryTraceList();\n});';
 const mountedP75New =
-  'onMounted(() => {\\n' +
-  '  void buildHistoryTraceList();\\n' +
-  '  void loadDatasetCatalog();\\n' +
+  'onMounted(() => {\n' +
+  '  void buildHistoryTraceList();\n' +
+  '  void loadDatasetCatalog();\n' +
   '});';
 if (!pgS75.includes(mountedP75Old)) {
   console.error("[patch-frontend] FAILED: P75 onMounted anchor drifted.");
@@ -4501,7 +4501,7 @@ const styleP75 = [
   '.dataset-footnote { margin:.65em 0 0 !important; color:#7d8698 !important; font-size:.7em !important; line-height:1.5 !important; text-align:left !important; }',
   '@media (max-width: 900px) { .dataset-mode-row, .dataset-family-grid { grid-template-columns:1fr; } }',
   '',
-].join("\\n");
+].join("\n");
 const stylePosP75 = pgS75.lastIndexOf(styleEndP75);
 if (stylePosP75 < 0) {
   console.error("[patch-frontend] FAILED: P75 style end missing.");
