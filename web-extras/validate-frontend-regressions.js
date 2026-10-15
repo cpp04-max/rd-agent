@@ -19,7 +19,7 @@ const checks = {
   liveResultApiErrorNormalization: api.includes("Live RESULT request failed with HTTP") && api.includes("Live RESULT response is missing a loops array"),
   monotonicLiveResultRows: result.includes("mergeLiveResultRows") && result.includes("mergeLiveResultRows(liveResultRows.value, snapshot.loops)"),
   controlApiErrorNormalization: api.includes("Control request failed with HTTP"),
-  confirmedStopOnly: playground.includes('await controlBtn("stop")') && playground.includes('response?.status !== "stopped"') && playground.includes('title: "Stop failed"'),
+  confirmedStopOnly: playgroundPage.includes('await controlBtn("stop")') && playgroundPage.includes('response?.status !== "stopped"') && playgroundPage.includes('title: "Stop failed"'),
 };
 const failed = Object.entries(checks).filter((item) => !item[1]).map((item) => item[0]);
 for (const item of Object.entries(checks)) {
