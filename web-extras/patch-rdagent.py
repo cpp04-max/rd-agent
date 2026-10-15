@@ -3695,4 +3695,313 @@ patch(
     "P74 replay durable stopped state after refresh",
 )
 
+
+# ---------------------------------------------------------------- P75 modern CSI300 datasets + run-scoped selection
+_modern_data_target = ROOT / "rdagent/scenarios/qlib/experiment/modern_csi300_data.py"
+_modern_data_target.write_text(snippet("modern_csi300_data.py") + "\n")
+print(f"patched {_modern_data_target.relative_to(ROOT)} (P75 modern CSI300 data module)", flush=True)
+
+_P75_DATA_CATALOG_ANCHOR = '''@app.route("/traces", methods=["GET"])
+def list_traces():
+'''
+_P75_DATA_CATALOG_NEW = '''@app.route("/data/catalog", methods=["GET"])
+def data_catalog():
+    from rdagent.scenarios.qlib.experiment.modern_csi300_data import dataset_catalog
+
+    return jsonify(dataset_catalog()), 200
+
+
+@app.route("/traces", methods=["GET"])
+def list_traces():
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P75_DATA_CATALOG_ANCHOR,
+    _P75_DATA_CATALOG_NEW,
+    "P75 expose dataset catalog",
+)
+
+_P75_UPLOAD_PARSE_OLD = '''    loop_n = request.form.get("loops")
+    all_duration = request.form.get("all_duration")
+'''
+_P75_UPLOAD_PARSE_NEW = '''    loop_n = request.form.get("loops")
+    all_duration = request.form.get("all_duration")
+    dataset_config_raw = request.form.get("dataset_config")
+    try:
+        from rdagent.scenarios.qlib.experiment.modern_csi300_data import normalize_dataset_config
+
+        dataset_config = normalize_dataset_config(dataset_config_raw)
+    except Exception as exc:
+        return jsonify({"error": f"Invalid dataset configuration: {exc}"}), 400
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P75_UPLOAD_PARSE_OLD,
+    _P75_UPLOAD_PARSE_NEW,
+    "P75 parse run dataset configuration",
+)
+
+_P75_TRACE_CONFIG_OLD = '''    log_trace_path = (log_folder_path / scenario / trace_name).absolute()
+    stdout_path = log_folder_path / scenario / f"{trace_name}.log"
+'''
+_P75_TRACE_CONFIG_NEW = '''    log_trace_path = (log_folder_path / scenario / trace_name).absolute()
+    stdout_path = log_folder_path / scenario / f"{trace_name}.log"
+    if scenario == "Finance Whole Pipeline":
+        import json as _json
+
+        log_trace_path.mkdir(parents=True, exist_ok=True)
+        (log_trace_path / "_dataset_config.json").write_text(
+            _json.dumps(dataset_config, indent=2),
+            encoding="utf-8",
+        )
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P75_TRACE_CONFIG_OLD,
+    _P75_TRACE_CONFIG_NEW,
+    "P75 persist requested dataset config in trace",
+)
+
+_P75_FIN_QUANT_KWARGS_OLD = '''        kwargs = {
+            "loop_n": loop_n_val,
+            "all_duration": all_duration_val,
+            "base_features_path": str(trace_files_path),
+        }
+'''
+_P75_FIN_QUANT_KWARGS_NEW = '''        kwargs = {
+            "loop_n": loop_n_val,
+            "all_duration": all_duration_val,
+            "base_features_path": str(trace_files_path),
+            "dataset_config": dataset_config,
+        }
+'''
+_server_path = ROOT / "rdagent/log/server/app.py"
+_server_text = _server_path.read_text()
+_fin_marker = '    if scenario == "Finance Whole Pipeline":\n        target_name = "fin_quant"\n'
+_fin_pos = _server_text.find(_fin_marker)
+if _fin_pos < 0:
+    print("PATCH FAILED [P75 fin_quant dataset kwargs]: fin_quant marker not found", flush=True)
+    sys.exit(1)
+_block_pos = _server_text.find(_P75_FIN_QUANT_KWARGS_OLD, _fin_pos)
+_next_if = _server_text.find("\n    if scenario ==", _fin_pos + len(_fin_marker))
+if _block_pos < 0 or (_next_if >= 0 and _block_pos > _next_if):
+    print("PATCH FAILED [P75 fin_quant dataset kwargs]: kwargs block not found", flush=True)
+    sys.exit(1)
+_server_text = (
+    _server_text[:_block_pos]
+    + _P75_FIN_QUANT_KWARGS_NEW
+    + _server_text[_block_pos + len(_P75_FIN_QUANT_KWARGS_OLD):]
+)
+_server_path.write_text(_server_text)
+print("patched rdagent/log/server/app.py (P75 fin_quant dataset kwargs)", flush=True)
+
+_P75_FIN_QUANT_RUN_OLD = '''                    elif self.target_name == "fin_quant":
+                        from rdagent.app.qlib_rd_loop.quant import main as fin_quant
+
+                        _ensure_qlib_cn_data()
+                        fin_quant(**self.kwargs)
+'''
+_P75_FIN_QUANT_RUN_NEW = '''                    elif self.target_name == "fin_quant":
+                        from rdagent.scenarios.qlib.experiment.modern_csi300_data import (
+                            normalize_dataset_config,
+                            prepare_for_run,
+                        )
+
+                        _dataset_config = normalize_dataset_config(
+                            self.kwargs.pop("dataset_config", None)
+                        )
+                        if _dataset_config["mode"] == "legacy":
+                            _ensure_qlib_cn_data()
+                        _dataset_config = prepare_for_run(
+                            _dataset_config,
+                            trace_dir=self.log_trace_path,
+                        )
+                        print(
+                            "[rd-agent] DATASET_ACTIVE "
+                            f"mode={_dataset_config['mode']} "
+                            f"families={_dataset_config.get('families', [])} "
+                            f"provider={_dataset_config.get('provider_uri')} "
+                            f"split={_dataset_config.get('split')}",
+                            flush=True,
+                        )
+
+                        from rdagent.app.qlib_rd_loop.quant import main as fin_quant
+
+                        fin_quant(**self.kwargs)
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P75_FIN_QUANT_RUN_OLD,
+    _P75_FIN_QUANT_RUN_NEW,
+    "P75 prepare selected dataset before importing fin_quant",
+)
+
+for _runner in (
+    "rdagent/scenarios/qlib/developer/factor_runner.py",
+    "rdagent/scenarios/qlib/developer/model_runner.py",
+):
+    patch(
+        _runner,
+        '            "PYTHONPATH": "./",',
+        '            "PYTHONPATH": "./",\n'
+        '            "qlib_provider_uri": os.environ.get(\n'
+        '                "RDAGENT_QLIB_PROVIDER_URI", "~/.qlib/qlib_data/cn_data"\n'
+        '            ),',
+        f"P75 pass provider URI through {_runner.split('/')[-1]}",
+    )
+
+for _yaml in (
+    "rdagent/scenarios/qlib/experiment/factor_template/conf_baseline.yaml",
+    "rdagent/scenarios/qlib/experiment/factor_template/conf_combined_factors.yaml",
+    "rdagent/scenarios/qlib/experiment/factor_template/conf_combined_factors_sota_model.yaml",
+    "rdagent/scenarios/qlib/experiment/model_template/conf_baseline_factors_model.yaml",
+    "rdagent/scenarios/qlib/experiment/model_template/conf_sota_factors_model.yaml",
+):
+    patch(
+        _yaml,
+        '    provider_uri: "~/.qlib/qlib_data/cn_data"',
+        '    provider_uri: "{{ qlib_provider_uri | default(\'~/.qlib/qlib_data/cn_data\', true) }}"',
+        f"P75 run-scoped provider in {_yaml.split('/')[-1]}",
+    )
+
+patch(
+    "rdagent/components/workflow/rd_loop.py",
+    "import asyncio\nimport json\n",
+    "import asyncio\nimport json\nimport os\n",
+    "P75 import os for dataset base features",
+)
+_P75_PLAN_OLD = '''        self.plan: ExperimentPlan = {
+            "features": ALPHA20,
+            "feature_codes": {},
+        }  # for user interaction
+'''
+_P75_PLAN_NEW = '''        _base_features = dict(ALPHA20)
+        try:
+            _dataset_features = json.loads(
+                os.environ.get("RDAGENT_DATASET_BASE_FEATURES", "{}")
+            )
+            if isinstance(_dataset_features, dict):
+                _base_features.update(
+                    {
+                        str(name): str(expr)
+                        for name, expr in _dataset_features.items()
+                        if name and expr
+                    }
+                )
+        except Exception:
+            logger.warning("Could not parse RDAGENT_DATASET_BASE_FEATURES; using ALPHA20 only.")
+
+        self.plan: ExperimentPlan = {
+            "features": _base_features,
+            "feature_codes": {},
+        }  # for user interaction
+'''
+patch(
+    "rdagent/components/workflow/rd_loop.py",
+    _P75_PLAN_OLD,
+    _P75_PLAN_NEW,
+    "P75 add selected modern fields to base model features",
+)
+
+_P75_TEST_FEATURE_OLD = '''TEST_FEATURE_CODE = """
+import qlib  
+from qlib.data import D  
+
+qlib.init()  
+expressions = {experessions}
+'''
+_P75_TEST_FEATURE_NEW = '''TEST_FEATURE_CODE = """
+import os
+import qlib
+from qlib.data import D
+
+qlib.init(provider_uri=os.environ.get("RDAGENT_QLIB_PROVIDER_URI", "~/.qlib/qlib_data/cn_data"))
+expressions = {experessions}
+'''
+patch(
+    "rdagent/utils/qlib.py",
+    _P75_TEST_FEATURE_OLD,
+    _P75_TEST_FEATURE_NEW,
+    "P75 validate custom fields against active provider",
+)
+
+_factor_generate = ROOT / "rdagent/scenarios/qlib/experiment/factor_data_template/generate.py"
+_factor_generate.write_text('''import json
+import os
+
+import qlib
+from qlib.data import D
+
+from rdagent.scenarios.qlib.experiment.modern_csi300_data import (
+    normalize_dataset_config,
+    qlib_fields_for_config,
+)
+
+_provider = os.environ.get("RDAGENT_QLIB_PROVIDER_URI", "~/.qlib/qlib_data/cn_data")
+qlib.init(provider_uri=_provider)
+
+_families = json.loads(os.environ.get("RDAGENT_DATASET_FAMILIES", "[]"))
+_mode = "modern" if _families else "legacy"
+_cfg = normalize_dataset_config({"mode": _mode, "families": _families})
+fields = qlib_fields_for_config(_cfg)
+if _mode == "legacy":
+    fields = ["$open", "$close", "$high", "$low", "$volume", "$factor"]
+
+instruments = D.instruments(market=os.environ.get("RDAGENT_QLIB_UNIVERSE", "csi300"))
+data = (
+    D.features(instruments, fields, freq="day")
+    .swaplevel()
+    .sort_index()
+    .loc["2008-01-01":]
+    .sort_index()
+)
+data.to_hdf("./daily_pv_all.h5", key="data")
+
+debug = (
+    D.features(
+        instruments,
+        fields,
+        start_time=os.environ.get("QLIB_FACTOR_VALID_START", "2015-01-01"),
+        end_time=os.environ.get("QLIB_FACTOR_VALID_END", "2016-12-31"),
+        freq="day",
+    )
+    .swaplevel()
+    .sort_index()
+)
+_debug_symbols = debug.reset_index()["instrument"].unique()[:100]
+debug = debug.swaplevel().loc[_debug_symbols].swaplevel().sort_index()
+debug.to_hdf("./daily_pv_debug.h5", key="data")
+
+print(
+    f"[rd-agent] factor data ready provider={_provider} mode={_mode} "
+    f"fields={fields} rows={len(data)}",
+    flush=True,
+)
+''')
+ast.parse(_factor_generate.read_text())
+print("patched rdagent/scenarios/qlib/experiment/factor_data_template/generate.py (P75 rich factor data)", flush=True)
+
+_factor_readme = ROOT / "rdagent/scenarios/qlib/experiment/factor_data_template/README.md"
+_factor_readme.write_text('''# RD-Agent(Q) daily research data
+
+All HDF5 files use key "data" and a (datetime, instrument) MultiIndex.
+
+daily_pv.h5 always contains adjusted daily price/volume fields:
+$open, $close, $high, $low, $volume, $factor.
+Modern CSI300 runs may additionally contain the selected point-in-time families:
+
+- $csi300_weight: historical CSI300 constituent weight.
+- $db_*: daily valuation, liquidity, shares and market-cap variables.
+- $industry_*: point-in-time Shenwan L1 industry context.
+- $mkt_*: CSI300 market-return / volatility context.
+- $if_*: CSI300 IF futures context.
+- $fi_*: financial indicators available only from announcement date onward.
+- $mf_*: stock money-flow ratios.
+- $margin_*: financing / securities-lending variables.
+- $north_*: northbound holding variables when the endpoint is available.
+
+Generated factor code should use only columns present in the HDF file and must not
+forward-fill information before its first observed or announcement date.
+''')
+print("patched factor_data_template/README.md (P75 dataset documentation)", flush=True)
 print("All rdagent patches applied.", flush=True)

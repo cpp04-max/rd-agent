@@ -66,7 +66,7 @@ RUN uv pip install --system -r requirements.txt \
 RUN uv pip install --system "litellm==1.95.0"
 
 # Finance (qlib) scenarios: qlib + mlflow + lightgbm + deps
-RUN uv pip install --system pyqlib
+RUN uv pip install --system pyqlib tushare
 
 # mlflow 3.x regression: its FileStore rejects the legacy './mlruns' backend and
 # its async metric logging breaks qlib's recorder ("Metric 'Rank IC' is malformed.

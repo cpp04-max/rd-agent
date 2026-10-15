@@ -867,6 +867,14 @@ def resume_trace():
         )
 
     stdout_path = dest_dir.parent / f"{branch_name}.log"
+    dataset_config = None
+    dataset_config_path = source_dir / "_dataset_config.json"
+    if dataset_config_path.exists():
+        try:
+            dataset_config = _json.loads(dataset_config_path.read_text(encoding="utf-8"))
+        except Exception:
+            dataset_config = None
+
     kwargs = {
         "path": str(checkpoint_path),
         "checkout": True,
@@ -875,6 +883,7 @@ def resume_trace():
         "resume_instruction": instruction or None,
         "resume_loop_index": int(selected["loop_index"]),
         "base_features_path": None,
+        "dataset_config": dataset_config,
     }
 
     task = RDAgentTask(
