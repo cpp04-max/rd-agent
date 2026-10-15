@@ -99,6 +99,15 @@ checks = {
     "frozen_result_inheritance":
         "_resume_inherited_results.json" in server
         and '_source_info["frozen"] = True' in server,
+    "worker_process_group_isolated":
+        'if hasattr(_os, "setsid")' in server and "_os.setsid()" in server,
+    "stop_kills_process_group":
+        "_os.killpg(_pgid, _signal.SIGTERM)" in server
+        and "_os.killpg(_pgid, _signal.SIGKILL)" in server,
+    "durable_user_stop":
+        "_terminal_status.json" in server
+        and "_write_terminal_status(" in server
+        and "P74 replay durable stopped state" not in server,
 }
 
 failed = [name for name, ok in checks.items() if not ok]

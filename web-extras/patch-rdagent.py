@@ -3430,4 +3430,269 @@ patch(
     "P73 prefer durable inherited RESULT snapshot",
 )
 
+
+# ---------------------------------------------------------------- P74 reliable stop + durable terminal state
+# Stop must terminate the entire worker process tree (including LocalEnv/qrun), not
+# only the multiprocessing parent. The stop decision must also survive browser/server
+# refreshes, so persist a small terminal marker outside the in-memory UI message list.
+_P74_RUN_SESSION_OLD = '''    def _run(self) -> None:
+        from rdagent.log.conf import LOG_SETTINGS
+'''
+_P74_RUN_SESSION_NEW = '''    def _run(self) -> None:
+        # Put each RD-Agent worker in its own Unix process group before it launches
+        # LocalEnv/qrun subprocesses. The server can then stop the whole experiment
+        # tree without touching its own process group.
+        try:
+            import os as _os
+
+            if hasattr(_os, "setsid"):
+                _os.setsid()
+        except OSError:
+            pass
+
+        from rdagent.log.conf import LOG_SETTINGS
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P74_RUN_SESSION_OLD,
+    _P74_RUN_SESSION_NEW,
+    "P74 isolate RD-Agent worker process group",
+)
+
+_P74_STOP_OLD = '''    def stop(self) -> None:
+        if self.process is not None and self.process.is_alive():
+            self.process.terminate()
+            self.process.join()
+
+        # Best-effort cleanup for IPC queues.
+'''
+_P74_STOP_NEW = '''    def stop(self) -> None:
+        if self.process is not None and self.process.is_alive():
+            import os as _os
+            import signal as _signal
+
+            _pid = self.process.pid
+            _pgid = None
+            _group_owned = False
+
+            if _pid and hasattr(_os, "getpgid") and hasattr(_os, "killpg"):
+                try:
+                    _pgid = _os.getpgid(_pid)
+                    # Only signal a process group when the worker is its leader.
+                    # Otherwise it may still share the server's process group.
+                    _group_owned = _pgid == _pid
+                except (OSError, ProcessLookupError):
+                    _pgid = None
+                    _group_owned = False
+
+            if _group_owned and _pgid is not None:
+                try:
+                    _os.killpg(_pgid, _signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+            else:
+                self.process.terminate()
+
+            self.process.join(timeout=5)
+
+            _group_alive = False
+            if _group_owned and _pgid is not None:
+                try:
+                    _os.killpg(_pgid, 0)
+                    _group_alive = True
+                except (ProcessLookupError, PermissionError):
+                    _group_alive = False
+
+            # qrun can outlive the Python worker after SIGTERM. Escalate the owned
+            # process group so no orphan training process survives a user Stop.
+            if self.process.is_alive() or _group_alive:
+                if _group_owned and _pgid is not None:
+                    try:
+                        _os.killpg(_pgid, _signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                elif self.process.is_alive():
+                    try:
+                        self.process.kill()
+                    except AttributeError:
+                        self.process.terminate()
+                self.process.join(timeout=5)
+
+        # Best-effort cleanup for IPC queues.
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P74_STOP_OLD,
+    _P74_STOP_NEW,
+    "P74 stop full RD-Agent/qrun process tree",
+)
+
+_P74_CONTROL_ANCHOR = '''@app.route("/control", methods=["POST"])
+def control_process():
+'''
+_P74_CONTROL_HELPERS = '''def _terminal_status_path(trace_dir: Path) -> Path:
+    return trace_dir / "_terminal_status.json"
+
+
+def _read_terminal_status(trace_dir: Path):
+    import json as _json
+
+    path = _terminal_status_path(trace_dir)
+    if not path.exists():
+        return None
+    try:
+        value = _json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _write_terminal_status(
+    trace_dir: Path,
+    *,
+    status: str,
+    reason: str,
+    end_code: int,
+):
+    import json as _json
+
+    trace_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "status": str(status),
+        "reason": str(reason),
+        "end_code": int(end_code),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    target = _terminal_status_path(trace_dir)
+    tmp = target.with_suffix(".json.tmp")
+    tmp.write_text(_json.dumps(payload, indent=2), encoding="utf-8")
+    tmp.replace(target)
+    return payload
+
+
+@app.route("/control", methods=["POST"])
+def control_process():
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P74_CONTROL_ANCHOR,
+    _P74_CONTROL_HELPERS,
+    "P74 add durable terminal status helpers",
+)
+
+_P74_CONTROL_STOP_OLD = '''    try:
+        if task.is_alive():
+            task.stop()
+
+        if not task.messages or task.messages[-1].get("tag") != "END":
+            task.messages.append(
+                {
+                    "tag": "END",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "content": {"error_msg": "RD-Agent process was stopped by user.", "end_code": -1},
+                }
+            )
+            app.logger.warning(f"Process for {id} has been stopped.")
+        return jsonify({"status": "stopped"}), 200
+    except Exception as e:
+'''
+_P74_CONTROL_STOP_NEW = '''    try:
+        if task.is_alive():
+            task.stop()
+
+        if task.is_alive():
+            return jsonify(
+                {"error": "RD-Agent process is still alive after stop attempt"}
+            ), 500
+
+        _trace_dir = Path(id)
+        _terminal = _write_terminal_status(
+            _trace_dir,
+            status="stopped",
+            reason="RD-Agent process was stopped by user.",
+            end_code=-1,
+        )
+
+        if not task.messages or task.messages[-1].get("tag") != "END":
+            task.messages.append(
+                {
+                    "tag": "END",
+                    "timestamp": _terminal["timestamp"],
+                    "content": {
+                        "error_msg": _terminal["reason"],
+                        "end_code": _terminal["end_code"],
+                    },
+                }
+            )
+        app.logger.warning(f"Process tree for {id} has been stopped.")
+        return jsonify(
+            {
+                "status": "stopped",
+                "id": data["id"],
+                "terminal": _terminal,
+            }
+        ), 200
+    except Exception as e:
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P74_CONTROL_STOP_OLD,
+    _P74_CONTROL_STOP_NEW,
+    "P74 persist confirmed user stop",
+)
+
+# P51 replay block is present after earlier patches; make durable stop marker authoritative.
+_P74_REPLAY_OLD = '''    _historical_or_finished = task.process is None or not task.is_alive()
+    if (
+        last_timestamp
+        and _historical_or_finished
+        and (not task.messages or task.messages[-1].get("tag") != "END")
+    ):
+        task.messages.append(
+            {
+                "tag": "END",
+                "timestamp": now.isoformat(),
+                "content": {"error_msg": "Trace session has ended.", "end_code": 0},
+            }
+        )
+'''
+_P74_REPLAY_NEW = '''    _historical_or_finished = task.process is None or not task.is_alive()
+    _terminal_status = _read_terminal_status(log_path)
+    if (
+        _terminal_status
+        and (not task.messages or task.messages[-1].get("tag") != "END")
+    ):
+        task.messages.append(
+            {
+                "tag": "END",
+                "timestamp": _terminal_status.get("timestamp") or now.isoformat(),
+                "content": {
+                    "error_msg": (
+                        _terminal_status.get("reason")
+                        or "RD-Agent process has ended."
+                    ),
+                    "end_code": int(_terminal_status.get("end_code", -1)),
+                },
+            }
+        )
+    elif (
+        last_timestamp
+        and _historical_or_finished
+        and (not task.messages or task.messages[-1].get("tag") != "END")
+    ):
+        task.messages.append(
+            {
+                "tag": "END",
+                "timestamp": now.isoformat(),
+                "content": {"error_msg": "Trace session has ended.", "end_code": 0},
+            }
+        )
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P74_REPLAY_OLD,
+    _P74_REPLAY_NEW,
+    "P74 replay durable stopped state after refresh",
+)
+
 print("All rdagent patches applied.", flush=True)

@@ -4091,3 +4091,107 @@ if (!resultS73.includes(rowsP73Old)) {
 resultS73 = resultS73.replace(rowsP73Old, rowsP73New);
 fs.writeFileSync(resultP73, resultS73);
 console.log("[patch-frontend] P73 monotonic live RESULT polling applied");
+
+// ------------------------- P74: confirmed Stop semantics -------------------------
+const apiPathP74 = "/src/web/src/utils/api.js";
+let apiS74 = fs.readFileSync(apiPathP74, "utf8");
+const controlP74Old = [
+  "export function control(data) {",
+  "    return request({",
+  "        url: url + \"control\",",
+  "        method: \"post\",",
+  "        headers: {",
+  "            \"Content-Type\": \"application/json\"",
+  "        },",
+  "        data: data",
+  "    })",
+  "}",
+].join("\n");
+const controlP74New = [
+  "export async function control(data) {",
+  "    const response = await request({",
+  "        url: url + \"control\",",
+  "        method: \"post\",",
+  "        headers: {",
+  "            \"Content-Type\": \"application/json\"",
+  "        },",
+  "        data: data",
+  "    });",
+  "    if (response && typeof response === \"object\" && Number(response.status) >= 400) {",
+  "        const payload = response.data && typeof response.data === \"object\" ? response.data : {};",
+  "        const error = new Error(payload.error || (\"Control request failed with HTTP \" + response.status + \".\"));",
+  "        error.response = response;",
+  "        throw error;",
+  "    }",
+  "    if (response && response.data && typeof response.data === \"object\" && response.data.status) {",
+  "        return response.data;",
+  "    }",
+  "    return response;",
+  "}",
+].join("\n");
+if (!apiS74.includes(controlP74Old)) {
+  console.error("[patch-frontend] FAILED: P74 control API anchor drifted.");
+  process.exit(1);
+}
+apiS74 = apiS74.replace(controlP74Old, controlP74New);
+fs.writeFileSync(apiPathP74, apiS74);
+
+const pgP74 = "/src/web/src/views/PlaygroundPage.vue";
+let pgS74 = fs.readFileSync(pgP74, "utf8");
+const stopP74Old = [
+  "const clickStop = (flag) => {",
+  "  stopFlag.value = flag;",
+  "  controlBtn(\"stop\");",
+  "  updateEnd.value = true;",
+  "  loopNumber.value = allData.value.length;",
+  "};",
+  "// \"stop\"",
+  "const controlBtn = (action) => {",
+  "  const data = {",
+  "    id: props.id,",
+  "    action: action,",
+  "  };",
+  "  control(data).then((response) => {",
+  "    console.log(response);",
+  "  });",
+  "};",
+].join("\n");
+const stopP74New = [
+  "const controlBtn = async (action) => {",
+  "  const response = await control({",
+  "    id: props.id,",
+  "    action: action,",
+  "  });",
+  "  if (action === \"stop\" && response?.status !== \"stopped\") {",
+  "    throw new Error(response?.error || \"Stop was not confirmed by the server.\");",
+  "  }",
+  "  return response;",
+  "};",
+  "",
+  "const clickStop = async (flag) => {",
+  "  if (!flag) return;",
+  "  try {",
+  "    await controlBtn(\"stop\");",
+  "    stopFlag.value = true;",
+  "    updateEnd.value = true;",
+  "    loopNumber.value = allData.value.length;",
+  "  } catch (error) {",
+  "    stopFlag.value = false;",
+  "    updateEnd.value = false;",
+  "    ElNotification({",
+  "      title: \"Stop failed\",",
+  "      message: error?.message || \"The experiment could not be stopped.\",",
+  "      type: \"error\",",
+  "      position: \"top-right\",",
+  "      duration: 7000,",
+  "    });",
+  "  }",
+  "};",
+].join("\n");
+if (!pgS74.includes(stopP74Old)) {
+  console.error("[patch-frontend] FAILED: P74 stop UI anchor drifted.");
+  process.exit(1);
+}
+pgS74 = pgS74.replace(stopP74Old, stopP74New);
+fs.writeFileSync(pgP74, pgS74);
+console.log("[patch-frontend] P74 confirmed Stop UI applied");

@@ -805,11 +805,13 @@ def resume_trace():
     # A copied source continuation may already carry its own frozen inheritance
     # snapshot. It describes the source boundary, not this new child boundary.
     inherited_snapshot_path = dest_dir / "_resume_inherited_results.json"
+    terminal_status_path = dest_dir / "_terminal_status.json"
     try:
         inherited_snapshot_path.unlink(missing_ok=True)
+        terminal_status_path.unlink(missing_ok=True)
     except OSError:
         app.logger.exception(
-            "Failed to remove copied inherited RESULT snapshot for %s",
+            "Failed to remove copied continuation metadata for %s",
             dest_dir,
         )
 
