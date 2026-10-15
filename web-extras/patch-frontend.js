@@ -4221,18 +4221,21 @@ fs.writeFileSync(apiPathP75, apiS75);
 const pgP75 = "/src/web/src/views/Playground.vue";
 let pgS75 = fs.readFileSync(pgP75, "utf8");
 
-const importMatchP75 = pgS75.match(
-  /import \\{([^}]+)\\} from "\\.\\.\\/utils\\/api";/
-);
-if (!importMatchP75) {
+const importLineP75 = pgS75
+  .split("\n")
+  .find(
+    (line) =>
+      line.includes("import {") &&
+      line.includes('from "../utils/api";')
+  );
+if (!importLineP75) {
   console.error("[patch-frontend] FAILED: P75 Playground API import not found.");
   process.exit(1);
 }
-if (!importMatchP75[1].includes("getDatasetCatalog")) {
-  const existingNamesP75 = importMatchP75[1].trim();
+if (!importLineP75.includes("getDatasetCatalog")) {
   pgS75 = pgS75.replace(
-    importMatchP75[0],
-    'import { getDatasetCatalog, ' + existingNamesP75 + ' } from "../utils/api";'
+    importLineP75,
+    importLineP75.replace("import {", "import { getDatasetCatalog,")
   );
 }
 
