@@ -19,7 +19,7 @@ INDEX_CODE = os.environ.get("RDAGENT_CSI300_INDEX_CODE", "000300.SH")
 INDEX_CODE_FALLBACK = "399300.SZ"
 
 REQUIRED_FAMILIES = ("price_volume", "csi300_membership")
-DEFAULT_OPTIONAL_FAMILIES = ("daily_basic", "industry", "market_context")
+DEFAULT_OPTIONAL_FAMILIES = ("daily_basic", "trading_status", "industry", "market_context")
 DEFAULT_FAMILIES = list(REQUIRED_FAMILIES + DEFAULT_OPTIONAL_FAMILIES)
 
 MODERN_SPLIT = {
@@ -71,6 +71,30 @@ FAMILY_CATALOG: dict[str, dict[str, Any]] = {
             "DB_DIV_YIELD_TTM": "$db_dv_ttm",
             "DB_LOG_TOTAL_MV": "Log($db_total_mv+1)",
             "DB_LOG_CIRC_MV": "Log($db_circ_mv+1)",
+        },
+    },
+    "trading_status": {
+        "label": "Trading / suspension status",
+        "description": "Daily suspension flag from the official stop/resume record; useful for tradability and missing-price interpretation.",
+        "source": "Tushare suspend_d",
+        "required": False,
+        "required_points": 2000,
+        "fields": ["$is_suspended"],
+        "model_features": {"IS_SUSPENDED": "$is_suspended"},
+    },
+    "intraday_market": {
+        "label": "CSI300 intraday market context",
+        "description": "Daily features derived from CSI300 5-minute bars: realized volatility, intraday range, last-30-minute return and last-hour volume share.",
+        "source": "Tushare idx_mins (5min)",
+        "required": False,
+        "required_points": None,
+        "permission": "separate historical index-minute permission",
+        "fields": ["$idx5m_rv", "$idx5m_range", "$idx5m_last30", "$idx5m_last_hour_vol_share"],
+        "model_features": {
+            "IDX5M_RV": "$idx5m_rv",
+            "IDX5M_RANGE": "$idx5m_range",
+            "IDX5M_LAST30": "$idx5m_last30",
+            "IDX5M_LAST_HOUR_VOL_SHARE": "$idx5m_last_hour_vol_share",
         },
     },
     "industry": {
@@ -167,9 +191,11 @@ FAMILY_CATALOG: dict[str, dict[str, Any]] = {
         "description": "Historical Stock Connect holding ratio / holding volume when available from the Tushare account.",
         "source": "Tushare hk_hold",
         "required": False,
-        "required_points": 2000,
-        "fields": ["$north_hold_ratio", "$north_hold_logvol"],
+        "required_points": 3000,
+        "permission": "legacy holding endpoint when available; modern Stock Connect list fallback from 2025-08",
+        "fields": ["$north_eligible", "$north_hold_ratio", "$north_hold_logvol"],
         "model_features": {
+            "NORTH_ELIGIBLE": "$north_eligible",
             "NORTH_HOLD_RATIO": "$north_hold_ratio",
             "NORTH_HOLD_LOGVOL": "$north_hold_logvol",
         },
@@ -598,6 +624,13 @@ def _fetch_symbol_family(pro, family: str, ts_code: str, start_date: str, end_da
             ts_code=ts_code, start_date=start_date, end_date=end_date,
         )
 
+    if family == "trading_status":
+        return _cache_full_history(
+            pro, family, key, "suspend_d",
+            ts_code=ts_code, start_date=start_date, end_date=end_date,
+            fields="ts_code,trade_date,suspend_timing,suspend_type",
+        )
+
     if family == "fundamentals":
         path = _raw_path(family, key)
         cached = _load_parquet(path)
@@ -648,9 +681,11 @@ def _fetch_symbol_family(pro, family: str, ts_code: str, start_date: str, end_da
             max_date = str(cached.get("trade_date", pd.Series(dtype=str)).astype(str).max() or "")
             if max_date >= end_date:
                 return cached
+
         print(f"[modern-data] downloading {family}/{key} ...", flush=True)
+        holdings = pd.DataFrame()
         try:
-            result = _request(
+            holdings = _request(
                 pro,
                 "hk_hold",
                 ts_code=ts_code,
@@ -659,11 +694,47 @@ def _fetch_symbol_family(pro, family: str, ts_code: str, start_date: str, end_da
                 fields="code,trade_date,ts_code,name,vol,ratio,exchange",
             )
         except RuntimeError as exc:
-            raise RuntimeError(
-                "Northbound holdings were selected but Tushare hk_hold is unavailable "
-                f"for this account/API version: {exc}"
-            ) from exc
+            print(
+                "[modern-data] legacy hk_hold unavailable; using modern Stock Connect "
+                f"eligibility fallback for {ts_code}: {exc}",
+                flush=True,
+            )
+
+        if not holdings.empty:
+            holdings["eligible"] = 1.0
+            _save_parquet(holdings, path)
+            return holdings
+
+        # Current Tushare exposes stock_hsgt from 2025-08-12. It is an eligibility
+        # signal, not a historical holding-size replacement, so ratio/vol remain NaN.
+        eligibility_frames = []
+        fallback_start = max(start_date, "20250812")
+        if fallback_start <= end_date:
+            for connect_type in ("HK_SH", "HK_SZ"):
+                try:
+                    frame = _request(
+                        pro,
+                        "stock_hsgt",
+                        ts_code=ts_code,
+                        type=connect_type,
+                        start_date=fallback_start,
+                        end_date=end_date,
+                        fields="ts_code,trade_date,type,name,type_name",
+                    )
+                except RuntimeError:
+                    frame = pd.DataFrame()
+                if not frame.empty:
+                    eligibility_frames.append(frame)
+
+        result = (
+            pd.concat(eligibility_frames, ignore_index=True)
+            .drop_duplicates(["trade_date", "ts_code"], keep="last")
+            if eligibility_frames else pd.DataFrame()
+        )
         if not result.empty:
+            result["eligible"] = 1.0
+            result["ratio"] = np.nan
+            result["vol"] = np.nan
             _save_parquet(result, path)
             return result
         return cached
@@ -759,6 +830,86 @@ def _fetch_if_futures(pro, start_date: str, end_date: str) -> pd.DataFrame:
     return merged.sort_values("trade_date")
 
 
+def _fetch_index_intraday(pro, start_date: str, end_date: str) -> pd.DataFrame:
+    """Fetch CSI300 5-minute history in bounded chunks and cache the raw bars."""
+    frames = []
+    start = max(pd.Timestamp(start_date), pd.Timestamp("2014-01-01"))
+    end = pd.Timestamp(end_date)
+    cursor = start
+    while cursor <= end:
+        chunk_end = min(cursor + pd.Timedelta(days=120), end)
+        key = f"{cursor:%Y%m%d}_{chunk_end:%Y%m%d}"
+        path = _raw_path("intraday_market", key)
+        cached = _load_parquet(path)
+        if cached.empty:
+            kwargs = {
+                "ts_code": INDEX_CODE,
+                "freq": "5min",
+                "start_date": f"{cursor:%Y-%m-%d} 09:00:00",
+                "end_date": f"{chunk_end:%Y-%m-%d} 16:00:00",
+                "fields": "ts_code,trade_time,open,close,high,low,vol,amount",
+            }
+            try:
+                cached = _request(pro, "idx_mins", **kwargs)
+            except RuntimeError:
+                kwargs["ts_code"] = INDEX_CODE_FALLBACK
+                cached = _request(pro, "idx_mins", **kwargs)
+            if not cached.empty:
+                _save_parquet(cached, path)
+        if not cached.empty:
+            frames.append(cached)
+        cursor = chunk_end + pd.Timedelta(days=1)
+
+    if not frames:
+        raise RuntimeError(
+            "CSI300 intraday_market was selected but idx_mins returned no data. "
+            "Historical index-minute permission may not be enabled."
+        )
+    return pd.concat(frames, ignore_index=True).drop_duplicates(
+        ["trade_time", "ts_code"], keep="last"
+    )
+
+
+def _build_intraday_market_context(bars: pd.DataFrame) -> pd.DataFrame:
+    df = bars.copy()
+    df["trade_time"] = pd.to_datetime(df["trade_time"], errors="coerce")
+    df = df.loc[df["trade_time"].notna()].sort_values("trade_time")
+    df["datetime"] = df["trade_time"].dt.normalize()
+    rows = []
+    for dt, day in df.groupby("datetime", sort=True):
+        day = day.sort_values("trade_time")
+        close = pd.to_numeric(day["close"], errors="coerce")
+        high = pd.to_numeric(day["high"], errors="coerce")
+        low = pd.to_numeric(day["low"], errors="coerce")
+        open_px = pd.to_numeric(day["open"], errors="coerce")
+        vol = pd.to_numeric(day.get("vol"), errors="coerce").fillna(0.0)
+        log_ret = np.log(close / close.shift(1)).replace([np.inf, -np.inf], np.nan)
+        valid_close = close.dropna()
+        if valid_close.empty:
+            continue
+        first_open = open_px.dropna().iloc[0] if open_px.notna().any() else valid_close.iloc[0]
+        last30 = (
+            valid_close.iloc[-1] / valid_close.iloc[-7] - 1.0
+            if len(valid_close) >= 7 else np.nan
+        )
+        total_vol = float(vol.sum())
+        rows.append(
+            {
+                "datetime": pd.Timestamp(dt),
+                "$idx5m_rv": float(np.sqrt(np.nansum(np.square(log_ret.to_numpy(dtype=float))))),
+                "$idx5m_range": (
+                    float(high.max() - low.min()) / float(first_open)
+                    if pd.notna(first_open) and float(first_open) != 0.0 else np.nan
+                ),
+                "$idx5m_last30": float(last30) if pd.notna(last30) else np.nan,
+                "$idx5m_last_hour_vol_share": (
+                    float(vol.tail(12).sum()) / total_vol if total_vol > 0 else np.nan
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def _stock_panel(
     ts_code: str,
     selected: list[str],
@@ -766,6 +917,7 @@ def _stock_panel(
     weight_frame: pd.DataFrame | None,
     index_context: pd.DataFrame | None,
     futures_context: pd.DataFrame | None,
+    intraday_context: pd.DataFrame | None,
 ) -> pd.DataFrame:
     price = raw["price_volume"].get(ts_code, pd.DataFrame()).copy()
     if price.empty:
@@ -808,6 +960,19 @@ def _stock_panel(
                     cols.append(dst)
             out = out.merge(db[cols].drop_duplicates("datetime", keep="last"), on="datetime", how="left")
 
+    if "trading_status" in selected:
+        status = raw["trading_status"].get(ts_code, pd.DataFrame()).copy()
+        out["$is_suspended"] = 0.0
+        if not status.empty:
+            status["datetime"] = pd.to_datetime(status["trade_date"].astype(str))
+            suspended_dates = set(
+                status.loc[
+                    status["suspend_type"].astype(str).str.upper().eq("S"),
+                    "datetime",
+                ].dt.normalize()
+            )
+            out["$is_suspended"] = out["datetime"].dt.normalize().isin(suspended_dates).astype(float)
+
     if "money_flow" in selected:
         mf = raw["money_flow"].get(ts_code, pd.DataFrame()).copy()
         if not mf.empty:
@@ -849,10 +1014,11 @@ def _stock_panel(
         nb = raw["northbound"].get(ts_code, pd.DataFrame()).copy()
         if not nb.empty and "trade_date" in nb.columns:
             nb["datetime"] = pd.to_datetime(nb["trade_date"].astype(str))
+            nb["$north_eligible"] = pd.to_numeric(nb.get("eligible", 1.0), errors="coerce").fillna(1.0)
             nb["$north_hold_ratio"] = pd.to_numeric(nb.get("ratio"), errors="coerce")
             nb["$north_hold_logvol"] = np.log1p(pd.to_numeric(nb.get("vol"), errors="coerce").clip(lower=0))
             out = out.merge(
-                nb[["datetime", "$north_hold_ratio", "$north_hold_logvol"]]
+                nb[["datetime", "$north_eligible", "$north_hold_ratio", "$north_hold_logvol"]]
                 .drop_duplicates("datetime", keep="last"),
                 on="datetime",
                 how="left",
@@ -913,6 +1079,9 @@ def _stock_panel(
     if futures_context is not None and not futures_context.empty:
         out = out.merge(futures_context, on="datetime", how="left")
 
+    if intraday_context is not None and not intraday_context.empty:
+        out = out.merge(intraday_context, on="datetime", how="left")
+
     out["instrument"] = _to_qlib_symbol(ts_code)
     return out.sort_values("datetime")
 
@@ -958,7 +1127,7 @@ def _add_industry_returns(panel: pd.DataFrame) -> pd.DataFrame:
     if "$industry_l1_id" not in panel.columns:
         return panel
     result = panel.copy()
-    result["__stock_ret"] = result.groupby("instrument", sort=False)["$close"].pct_change()
+    result["__stock_ret"] = result.groupby("instrument", sort=False)["$close"].pct_change(fill_method=None)
     industry_ret = (
         result.groupby(["datetime", "$industry_l1_id"], dropna=True)["__stock_ret"]
         .mean()
@@ -1170,9 +1339,15 @@ def prepare_for_run(config: dict[str, Any], trace_dir: str | Path | None = None)
                 index_df,
             )
 
+        intraday_context = None
+        if "intraday_market" in selected:
+            intraday_context = _build_intraday_market_context(
+                _fetch_index_intraday(pro, start_date, resolved_end)
+            )
+
         symbol_families = [
             f for f in selected
-            if f in {"price_volume", "daily_basic", "industry", "fundamentals", "money_flow", "margin", "northbound"}
+            if f in {"price_volume", "daily_basic", "trading_status", "industry", "fundamentals", "money_flow", "margin", "northbound"}
         ]
         raw: dict[str, dict[str, pd.DataFrame]] = {family: {} for family in symbol_families}
 
@@ -1199,6 +1374,7 @@ def prepare_for_run(config: dict[str, Any], trace_dir: str | Path | None = None)
                 weights.get(ts_code),
                 index_context,
                 futures_context,
+                intraday_context,
             )
             if not panel.empty:
                 panels.append(panel)
