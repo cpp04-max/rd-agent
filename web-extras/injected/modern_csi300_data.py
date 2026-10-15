@@ -1081,6 +1081,24 @@ def configure_runtime(config: dict[str, Any]) -> dict[str, Any]:
         os.environ["RDAGENT_DATASET_FAMILIES"] = json.dumps(resolved["families"])
         os.environ["RDAGENT_DATASET_BASE_FEATURES"] = json.dumps(model_features_for_config(resolved))
 
+    # Factor CoSTEER normally keeps one process-global daily_pv.h5 directory. That
+    # is unsafe once experiments can select different providers/families: a later run
+    # could reuse an HDF created by a different dataset. Give every frozen dataset
+    # configuration its own persistent factor-source cache.
+    _cache_identity = json.dumps(
+        {
+            "mode": resolved["mode"],
+            "provider_uri": resolved.get("provider_uri"),
+            "families": resolved.get("families", []),
+        },
+        sort_keys=True,
+    )
+    _cache_key = hashlib.sha1(_cache_identity.encode("utf-8")).hexdigest()[:16]
+    _factor_cache_root = DATA_ROOT / "factor_source" / _cache_key
+    os.environ["FACTOR_COSTEER_DATA_FOLDER"] = str(_factor_cache_root / "full")
+    os.environ["FACTOR_COSTEER_DATA_FOLDER_DEBUG"] = str(_factor_cache_root / "debug")
+    resolved["factor_source_cache"] = str(_factor_cache_root)
+
     split = resolved["split"]
     for prefix in ("QLIB_FACTOR_", "QLIB_MODEL_", "QLIB_QUANT_"):
         for key, value in split.items():
