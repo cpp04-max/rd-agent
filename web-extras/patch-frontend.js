@@ -4195,3 +4195,322 @@ if (!pgS74.includes(stopP74Old)) {
 pgS74 = pgS74.replace(stopP74Old, stopP74New);
 fs.writeFileSync(pgP74, pgS74);
 console.log("[patch-frontend] P74 confirmed Stop UI applied");
+
+
+// ------------------------- P75: selectable modern CSI300 datasets -------------------------
+const apiPathP75 = "/src/web/src/utils/api.js";
+let apiS75 = fs.readFileSync(apiPathP75, "utf8");
+const catalogApiAnchorP75 = "export function getHistoryTraceIds() {";
+const catalogApiInsertP75 = [
+  "export function getDatasetCatalog() {",
+  "    return request({",
+  "        url: url + \\"data/catalog\\",",
+  "        method: 'get'",
+  "    })",
+  "}",
+  "",
+  "export function getHistoryTraceIds() {",
+].join("\\n");
+if (!apiS75.includes(catalogApiAnchorP75)) {
+  console.error("[patch-frontend] FAILED: P75 dataset catalog API anchor drifted.");
+  process.exit(1);
+}
+apiS75 = apiS75.replace(catalogApiAnchorP75, catalogApiInsertP75);
+fs.writeFileSync(apiPathP75, apiS75);
+
+const pgP75 = "/src/web/src/views/Playground.vue";
+let pgS75 = fs.readFileSync(pgP75, "utf8");
+
+const importP75Old =
+  'import { getHistoryTraceIds, uploadFile } from "../utils/api";';
+const importP75New =
+  'import { getDatasetCatalog, getHistoryTraceIds, uploadFile } from "../utils/api";';
+if (!pgS75.includes(importP75Old)) {
+  console.error("[patch-frontend] FAILED: P75 Playground API import anchor drifted.");
+  process.exit(1);
+}
+pgS75 = pgS75.replace(importP75Old, importP75New);
+
+const stateP75Old =
+  'const hourNumber = ref(6);\\n' +
+  'const scenarioName = ref("");';
+const stateP75New =
+  'const hourNumber = ref(6);\\n' +
+  'const datasetCatalog = ref(null);\\n' +
+  'const datasetMode = ref("legacy");\\n' +
+  'const datasetFamilies = ref([]);\\n' +
+  'const datasetCatalogLoading = ref(false);\\n' +
+  'const scenarioName = ref("");';
+if (!pgS75.includes(stateP75Old)) {
+  console.error("[patch-frontend] FAILED: P75 dataset state anchor drifted.");
+  process.exit(1);
+}
+pgS75 = pgS75.replace(stateP75Old, stateP75New);
+
+const helperAnchorP75 = "const getTraceNameFromId = (traceId) => {";
+const helpersP75 = [
+  'const isFinanceWholePipeline = computed(() =>',
+  '  scenarioChecked.value?.name === "Finance Whole Pipeline"',
+  ');',
+  '',
+  'const datasetFamilyCatalog = computed(() =>',
+  '  Array.isArray(datasetCatalog.value?.families)',
+  '    ? datasetCatalog.value.families',
+  '    : []',
+  ');',
+  '',
+  'const loadDatasetCatalog = async () => {',
+  '  datasetCatalogLoading.value = true;',
+  '  try {',
+  '    const response = await getDatasetCatalog();',
+  '    const payload =',
+  '      response?.data && Array.isArray(response.data?.families)',
+  '        ? response.data',
+  '        : response;',
+  '    if (payload && Array.isArray(payload.families)) {',
+  '      datasetCatalog.value = payload;',
+  '      datasetFamilies.value = Array.isArray(payload.default_families)',
+  '        ? [...payload.default_families]',
+  '        : payload.families.filter((item) => item.required || item.default).map((item) => item.id);',
+  '    }',
+  '  } catch (error) {',
+  '    ElMessage.warning("Could not load the market dataset catalog; legacy data remains available.");',
+  '  } finally {',
+  '    datasetCatalogLoading.value = false;',
+  '  }',
+  '};',
+  '',
+  'const selectDatasetPreset = (preset) => {',
+  '  const families = datasetFamilyCatalog.value;',
+  '  if (preset === "all") {',
+  '    datasetFamilies.value = families.map((item) => item.id);',
+  '    return;',
+  '  }',
+  '  datasetFamilies.value = families',
+  '    .filter((item) => item.required || item.default)',
+  '    .map((item) => item.id);',
+  '};',
+  '',
+  'const resolvedDatasetFamilies = () => {',
+  '  const required = datasetFamilyCatalog.value',
+  '    .filter((item) => item.required)',
+  '    .map((item) => item.id);',
+  '  return [...new Set([...required, ...datasetFamilies.value])];',
+  '};',
+  '',
+  helperAnchorP75,
+].join("\\n");
+if (!pgS75.includes(helperAnchorP75)) {
+  console.error("[patch-frontend] FAILED: P75 dataset helper anchor drifted.");
+  process.exit(1);
+}
+pgS75 = pgS75.replace(helperAnchorP75, helpersP75);
+
+const formP75Old =
+  '  formData.append("all_duration", hourNumber.value);\\n\\n' +
+  '  return formData;';
+const formP75New =
+  '  formData.append("all_duration", hourNumber.value);\\n' +
+  '  if (scenarioChecked.value?.name === "Finance Whole Pipeline") {\\n' +
+  '    formData.append(\\n' +
+  '      "dataset_config",\\n' +
+  '      JSON.stringify({\\n' +
+  '        mode: datasetMode.value,\\n' +
+  '        families: datasetMode.value === "modern" ? resolvedDatasetFamilies() : [],\\n' +
+  '      })\\n' +
+  '    );\\n' +
+  '  }\\n\\n' +
+  '  return formData;';
+if (!pgS75.includes(formP75Old)) {
+  console.error("[patch-frontend] FAILED: P75 FormData anchor drifted.");
+  process.exit(1);
+}
+pgS75 = pgS75.replace(formP75Old, formP75New);
+
+const generateP75Old = 'const generate = () => {\\n  uploaDone.value = false;';
+const generateP75New = [
+  'const generate = () => {',
+  '  uploaDone.value = false;',
+  '  if (',
+  '    scenarioChecked.value?.name === "Finance Whole Pipeline" &&',
+  '    datasetMode.value === "modern" &&',
+  '    datasetCatalog.value &&',
+  '    !datasetCatalog.value.token_configured',
+  '  ) {',
+  '    ElMessage.error("Modern CSI300 data requires TUSHARE_TOKEN to be configured on the server.");',
+  '    return;',
+  '  }',
+].join("\\n");
+if (!pgS75.includes(generateP75Old)) {
+  console.error("[patch-frontend] FAILED: P75 generate guard anchor drifted.");
+  process.exit(1);
+}
+pgS75 = pgS75.replace(generateP75Old, generateP75New);
+
+const durationStartP75 = pgS75.indexOf('<div class="compact-setting-row is-second">');
+if (durationStartP75 < 0) {
+  console.error("[patch-frontend] FAILED: P75 duration block missing.");
+  process.exit(1);
+}
+const loopEndAnchorP75 = '\\n            </div>\\n            <div\\n              class="btn-main"';
+const loopEndP75 = pgS75.indexOf(loopEndAnchorP75, durationStartP75);
+if (loopEndP75 < 0) {
+  console.error("[patch-frontend] FAILED: P75 loop-content end anchor drifted.");
+  process.exit(1);
+}
+const datasetUiP75 = [
+  '',
+  '              <div',
+  '                class="dataset-config-card"',
+  '                v-if="isFinanceWholePipeline"',
+  '              >',
+  '                <div class="dataset-config-head">',
+  '                  <div>',
+  '                    <div class="dataset-config-title">Market dataset</div>',
+  '                    <div class="dataset-config-subtitle">',
+  '                      Choose the information available to RD-Agent for this experiment.',
+  '                    </div>',
+  '                  </div>',
+  '                  <span v-if="datasetCatalogLoading" class="dataset-status">loading...</span>',
+  '                </div>',
+  '                <div class="dataset-mode-row">',
+  '                  <label class="dataset-mode-option">',
+  '                    <input type="radio" value="legacy" v-model="datasetMode" />',
+  '                    <span>',
+  '                      <strong>Legacy benchmark</strong>',
+  '                      <small>2008–2014 train · 2015–2016 valid · 2017–2020 test</small>',
+  '                    </span>',
+  '                  </label>',
+  '                  <label class="dataset-mode-option">',
+  '                    <input type="radio" value="modern" v-model="datasetMode" />',
+  '                    <span>',
+  '                      <strong>Modern CSI300</strong>',
+  '                      <small>Point-in-time universe · latest available daily data</small>',
+  '                    </span>',
+  '                  </label>',
+  '                </div>',
+  '',
+  '                <div v-if="datasetMode === \\'modern\\'" class="dataset-modern-panel">',
+  '                  <div',
+  '                    class="dataset-token-state"',
+  '                    :class="{ ready: datasetCatalog?.token_configured }"',
+  '                  >',
+  '                    {{',
+  '                      datasetCatalog?.token_configured',
+  '                        ? "Tushare token configured · raw downloads are cached on /data"',
+  '                        : "Tushare token is not configured. Set TUSHARE_TOKEN on the server before running Modern CSI300."',
+  '                    }}',
+  '                  </div>',
+  '                  <div class="dataset-split" v-if="datasetCatalog?.modern_split">',
+  '                    <strong>Default walk-forward split</strong>',
+  '                    <span>',
+  '                      Train {{ datasetCatalog.modern_split.train_start }} → {{ datasetCatalog.modern_split.train_end }}',
+  '                    </span>',
+  '                    <span>',
+  '                      Valid {{ datasetCatalog.modern_split.valid_start }} → {{ datasetCatalog.modern_split.valid_end }}',
+  '                    </span>',
+  '                    <span>',
+  '                      Test {{ datasetCatalog.modern_split.test_start }} → latest available trading day',
+  '                    </span>',
+  '                  </div>',
+  '                  <div class="dataset-preset-row">',
+  '                    <button type="button" @click="selectDatasetPreset(\\'recommended\\')">Recommended</button>',
+  '                    <button type="button" @click="selectDatasetPreset(\\'all\\')">Select all</button>',
+  '                  </div>',
+  '                  <div class="dataset-family-grid">',
+  '                    <label',
+  '                      class="dataset-family-item"',
+  '                      v-for="family in datasetFamilyCatalog"',
+  '                      :key="family.id"',
+  '                    >',
+  '                      <input',
+  '                        type="checkbox"',
+  '                        :value="family.id"',
+  '                        v-model="datasetFamilies"',
+  '                        :disabled="family.required"',
+  '                      />',
+  '                      <span class="dataset-family-copy">',
+  '                        <span class="dataset-family-name">',
+  '                          {{ family.label }}',
+  '                          <em v-if="family.required">required</em>',
+  '                        </span>',
+  '                        <small>{{ family.description }}</small>',
+  '                        <span class="dataset-family-source">',
+  '                          {{ family.source }} · {{ family.required_points }}+ Tushare points',
+  '                        </span>',
+  '                      </span>',
+  '                    </label>',
+  '                  </div>',
+  '                  <p class="dataset-footnote">',
+  '                    Only selected optional families are downloaded. Continue/Branch keeps the frozen provider used by the source trace.',
+  '                  </p>',
+  '                </div>',
+  '              </div>',
+].join("\\n");
+pgS75 =
+  pgS75.slice(0, loopEndP75) +
+  datasetUiP75 +
+  pgS75.slice(loopEndP75);
+
+const mountedP75Old = 'onMounted(() => {\\n  void buildHistoryTraceList();\\n});';
+const mountedP75New =
+  'onMounted(() => {\\n' +
+  '  void buildHistoryTraceList();\\n' +
+  '  void loadDatasetCatalog();\\n' +
+  '});';
+if (!pgS75.includes(mountedP75Old)) {
+  console.error("[patch-frontend] FAILED: P75 onMounted anchor drifted.");
+  process.exit(1);
+}
+pgS75 = pgS75.replace(mountedP75Old, mountedP75New);
+
+const styleEndP75 = "</style>";
+const styleP75 = [
+  '',
+  '.dataset-config-card {',
+  '  margin-top: 1.15em;',
+  '  padding: 1em 1.05em;',
+  '  border: 1px solid var(--card-border-color);',
+  '  border-radius: 16px;',
+  '  background: var(--bg-white);',
+  '  box-shadow: 8px 11px 30px 0 var(--wg-shadow-color);',
+  '}',
+  '.dataset-config-head { display:flex; justify-content:space-between; gap:1em; align-items:flex-start; }',
+  '.dataset-config-title { font-size:1.05em; font-weight:800; color:var(--text-color); }',
+  '.dataset-config-subtitle { margin-top:.18em; font-size:.78em; color:#7b8495; }',
+  '.dataset-status { font-size:.75em; color:#7b8495; }',
+  '.dataset-mode-row { display:grid; grid-template-columns:1fr 1fr; gap:.65em; margin-top:.8em; }',
+  '.dataset-mode-option { display:flex; gap:.55em; align-items:flex-start; padding:.7em; border:1px solid #e0e5ef; border-radius:12px; cursor:pointer; }',
+  '.dataset-mode-option span, .dataset-mode-option strong, .dataset-mode-option small { display:block; }',
+  '.dataset-mode-option strong { color:var(--text-color); font-size:.88em; }',
+  '.dataset-mode-option small { color:#7d8698; font-size:.72em; line-height:1.45; margin-top:.15em; }',
+  '.dataset-modern-panel { margin-top:.8em; }',
+  '.dataset-token-state { padding:.55em .7em; border-radius:9px; background:#fff5f5; color:#a33b3b; font-size:.76em; }',
+  '.dataset-token-state.ready { background:#f2fbf5; color:#32764a; }',
+  '.dataset-split { display:flex; flex-wrap:wrap; gap:.35em .85em; margin-top:.7em; font-size:.72em; color:#687286; }',
+  '.dataset-split strong { color:var(--text-color); }',
+  '.dataset-preset-row { display:flex; gap:.45em; margin-top:.7em; }',
+  '.dataset-preset-row button { width:auto !important; height:auto !important; padding:.34em .7em !important; border:1px solid #d9e0ee !important; border-radius:999px !important; background:#fff !important; color:#566177 !important; font-size:.72em !important; text-transform:none !important; box-shadow:none !important; }',
+  '.dataset-family-grid { display:grid; grid-template-columns:1fr 1fr; gap:.55em; margin-top:.65em; }',
+  '.dataset-family-item { display:flex; gap:.55em; align-items:flex-start; padding:.62em; border:1px solid #e5e9f1; border-radius:10px; }',
+  '.dataset-family-copy, .dataset-family-name, .dataset-family-copy small, .dataset-family-source { display:block; }',
+  '.dataset-family-name { color:var(--text-color); font-size:.8em; font-weight:700; }',
+  '.dataset-family-name em { margin-left:.35em; font-size:.72em; font-style:normal; color:#5f6f8f; }',
+  '.dataset-family-copy small { margin-top:.15em; color:#747e90; font-size:.69em; line-height:1.4; }',
+  '.dataset-family-source { margin-top:.22em; color:#9299a7; font-size:.64em; }',
+  '.dataset-footnote { margin:.65em 0 0 !important; color:#7d8698 !important; font-size:.7em !important; line-height:1.5 !important; text-align:left !important; }',
+  '@media (max-width: 900px) { .dataset-mode-row, .dataset-family-grid { grid-template-columns:1fr; } }',
+  '',
+].join("\\n");
+const stylePosP75 = pgS75.lastIndexOf(styleEndP75);
+if (stylePosP75 < 0) {
+  console.error("[patch-frontend] FAILED: P75 style end missing.");
+  process.exit(1);
+}
+pgS75 =
+  pgS75.slice(0, stylePosP75) +
+  styleP75 +
+  pgS75.slice(stylePosP75);
+
+fs.writeFileSync(pgP75, pgS75);
+console.log("[patch-frontend] P75 modern CSI300 dataset selector applied");
