@@ -4460,17 +4460,17 @@ pgS75 =
   datasetUiP75 +
   pgS75.slice(loopEndP75);
 
-const mountedP75Old = 'onMounted(() => {\n  void buildHistoryTraceList();\n});';
-const mountedP75New =
+const mountedP75Anchor =
   'onMounted(() => {\n' +
-  '  void buildHistoryTraceList();\n' +
-  '  void loadDatasetCatalog();\n' +
-  '});';
-if (!pgS75.includes(mountedP75Old)) {
+  '  // Warm only the cheap experiment-name list. Resume checkpoint details are lazy.\n' +
+  '  void buildHistoryTraceList({ loadResume: false });';
+const mountedP75New =
+  mountedP75Anchor + '\n  void loadDatasetCatalog();';
+if (!pgS75.includes(mountedP75Anchor)) {
   console.error("[patch-frontend] FAILED: P75 onMounted anchor drifted.");
   process.exit(1);
 }
-pgS75 = pgS75.replace(mountedP75Old, mountedP75New);
+pgS75 = pgS75.replace(mountedP75Anchor, mountedP75New);
 
 const styleEndP75 = "</style>";
 const styleP75 = [
