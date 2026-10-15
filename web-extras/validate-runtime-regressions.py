@@ -154,3 +154,87 @@ with tempfile.TemporaryDirectory() as tmp:
         server_mod.rdagent_processes = _original_processes
 
 print("[runtime-regression] recursive continuation RESULT inheritance: OK")
+
+
+# P75: build a tiny modern Qlib provider using the exact custom binary writer and
+# read the selected custom field back through qlib. This catches incorrect calendar
+# offsets, binary layout, instrument files, or field naming without any network call.
+import numpy as np
+import qlib
+from qlib.data import D
+from rdagent.scenarios.qlib.experiment import modern_csi300_data as modern_data
+
+with tempfile.TemporaryDirectory() as tmp:
+    provider = Path(tmp) / "provider"
+    calendar = [
+        pd.Timestamp("2024-01-02"),
+        pd.Timestamp("2024-01-03"),
+        pd.Timestamp("2024-01-04"),
+    ]
+    panel = pd.DataFrame(
+        {
+            "datetime": calendar,
+            "instrument": ["SH600000"] * 3,
+            "$open": [10.0, 10.5, 10.8],
+            "$close": [10.2, 10.7, 11.0],
+            "$high": [10.4, 10.9, 11.2],
+            "$low": [9.9, 10.3, 10.6],
+            "$volume": [1000.0, 1100.0, 1200.0],
+            "$factor": [1.0, 1.0, 1.0],
+            "$amount": [10000.0, 11800.0, 13200.0],
+            "$db_pb": [1.1, 1.2, 1.3],
+            "$csi300_weight": [0.4, 0.4, 0.4],
+        }
+    )
+    membership = [("SH600000", "2024-01-02", "2024-01-04")]
+    index_df = pd.DataFrame(
+        {
+            "trade_date": ["20240102", "20240103", "20240104"],
+            "open": [3500.0, 3510.0, 3520.0],
+            "close": [3505.0, 3515.0, 3530.0],
+            "high": [3510.0, 3520.0, 3540.0],
+            "low": [3490.0, 3500.0, 3510.0],
+            "vol": [1e6, 1.1e6, 1.2e6],
+            "amount": [2e8, 2.1e8, 2.2e8],
+        }
+    )
+    modern_data._write_bin_provider(
+        provider,
+        calendar,
+        panel,
+        membership,
+        index_df,
+        [
+            "$open", "$close", "$high", "$low", "$volume", "$factor",
+            "$amount", "$db_pb", "$csi300_weight",
+        ],
+    )
+
+    raw = np.fromfile(
+        provider / "features" / "sh600000" / "db_pb.day.bin",
+        dtype="<f4",
+    )
+    assert raw.shape == (4,), f"unexpected Qlib binary length: {raw.shape}"
+    assert raw[0] == 0.0, f"unexpected Qlib calendar offset: {raw[0]}"
+    assert np.allclose(raw[1:], [1.1, 1.2, 1.3], atol=1e-6)
+
+    qlib.init(provider_uri=str(provider), region="cn")
+    values = D.features(
+        ["SH600000"],
+        ["$close", "$db_pb", "$csi300_weight"],
+        start_time="2024-01-02",
+        end_time="2024-01-04",
+        freq="day",
+    )
+    assert len(values) == 3, f"Qlib did not read all synthetic modern rows: {len(values)}"
+    assert np.allclose(values["$db_pb"].to_numpy(), [1.1, 1.2, 1.3], atol=1e-6)
+    assert np.allclose(values["$csi300_weight"].to_numpy(), [0.4, 0.4, 0.4], atol=1e-6)
+
+    cfg = modern_data.normalize_dataset_config(
+        {"mode": "modern", "families": ["daily_basic"]}
+    )
+    assert "price_volume" in cfg["families"] and "csi300_membership" in cfg["families"]
+    assert "daily_basic" in cfg["families"]
+    assert cfg["split"]["test_start"] == "2024-01-01"
+
+print("[runtime-regression] modern CSI300 Qlib provider + custom field readback: OK")

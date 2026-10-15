@@ -20,6 +20,12 @@ const checks = {
   monotonicLiveResultRows: result.includes("mergeLiveResultRows") && result.includes("mergeLiveResultRows(liveResultRows.value, snapshot.loops)"),
   controlApiErrorNormalization: api.includes("Control request failed with HTTP"),
   confirmedStopOnly: playgroundPage.includes('await controlBtn("stop")') && playgroundPage.includes('response?.status !== "stopped"') && playgroundPage.includes('title: "Stop failed"'),
+  datasetCatalogApi: api.includes("getDatasetCatalog") && api.includes("data/catalog"),
+  datasetSelectorUi: playground.includes("Modern CSI300") && playground.includes("dataset-config-card"),
+  datasetSubsetSubmission: playground.includes('"dataset_config"') && playground.includes("resolvedDatasetFamilies"),
+  datasetRequiredFamilies: playground.includes(":disabled=\"family.required\""),
+  datasetPresets: playground.includes("Recommended") && playground.includes("Select all"),
+  datasetCatalogLoadedOnMount: playground.includes("void loadDatasetCatalog();"),
 };
 const failed = Object.entries(checks).filter((item) => !item[1]).map((item) => item[0]);
 for (const item of Object.entries(checks)) {

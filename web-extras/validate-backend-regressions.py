@@ -25,6 +25,11 @@ quant = read("rdagent/app/qlib_rd_loop/quant.py")
 loop = read("rdagent/utils/workflow/loop.py")
 server = read("rdagent/log/server/app.py")
 litellm = read("rdagent/oai/backend/litellm.py")
+modern_data = read("rdagent/scenarios/qlib/experiment/modern_csi300_data.py")
+rd_loop = read("rdagent/components/workflow/rd_loop.py")
+factor_generate = read("rdagent/scenarios/qlib/experiment/factor_data_template/generate.py")
+factor_baseline = read("rdagent/scenarios/qlib/experiment/factor_template/conf_baseline.yaml")
+model_baseline = read("rdagent/scenarios/qlib/experiment/model_template/conf_baseline_factors_model.yaml")
 
 checks = {
     "qlib_local_cache_disabled": "enable_cache=False" in workspace,
@@ -108,6 +113,42 @@ checks = {
         "_terminal_status.json" in server
         and "_write_terminal_status(" in server
         and "P74 replay durable stopped state" not in server,
+    "modern_dataset_catalog_route":
+        '@app.route("/data/catalog"' in server
+        and "dataset_catalog" in server,
+    "modern_dataset_run_config":
+        'request.form.get("dataset_config")' in server
+        and '"dataset_config": dataset_config' in server
+        and "prepare_for_run(" in server
+        and "[rd-agent] DATASET_ACTIVE" in server,
+    "modern_provider_runtime":
+        "RDAGENT_QLIB_PROVIDER_URI" in factor_runner
+        and "RDAGENT_QLIB_PROVIDER_URI" in model_runner
+        and "qlib_provider_uri" in factor_baseline
+        and "qlib_provider_uri" in model_baseline,
+    "modern_feature_families":
+        all(name in modern_data for name in (
+            "price_volume", "csi300_membership", "daily_basic", "industry",
+            "market_context", "if_futures", "fundamentals", "money_flow",
+            "margin", "northbound",
+        )),
+    "point_in_time_guards":
+        'fi["ann_date"]' in modern_data
+        and '"in_date"' in modern_data
+        and '"out_date"' in modern_data
+        and "index_weight" in modern_data,
+    "modern_split":
+        '"train_end": "2021-12-31"' in modern_data
+        and '"valid_end": "2023-12-31"' in modern_data
+        and '"test_start": "2024-01-01"' in modern_data,
+    "rich_factor_hdf":
+        "qlib_fields_for_config" in factor_generate
+        and "RDAGENT_DATASET_FAMILIES" in factor_generate,
+    "selected_data_base_features":
+        "RDAGENT_DATASET_BASE_FEATURES" in rd_loop,
+    "custom_qlib_binary_writer":
+        "def _write_bin_provider(" in modern_data
+        and "np.hstack([np.float32(start_index), values])" in modern_data,
 }
 
 failed = [name for name, ok in checks.items() if not ok]
