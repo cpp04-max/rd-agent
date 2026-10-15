@@ -971,7 +971,24 @@ def _stock_panel(
                     "datetime",
                 ].dt.normalize()
             )
-            out["$is_suspended"] = out["datetime"].dt.normalize().isin(suspended_dates).astype(float)
+            # Daily price has no rows while a stock is suspended. Add those dates
+            # explicitly so the Qlib binary contains NaN prices but an observable
+            # $is_suspended=1 rather than silently dropping the status information.
+            missing_status_dates = sorted(
+                suspended_dates - set(out["datetime"].dt.normalize())
+            )
+            if missing_status_dates:
+                out = pd.concat(
+                    [
+                        out,
+                        pd.DataFrame({"datetime": missing_status_dates}),
+                    ],
+                    ignore_index=True,
+                    sort=False,
+                ).sort_values("datetime")
+            out["$is_suspended"] = (
+                out["datetime"].dt.normalize().isin(suspended_dates).astype(float)
+            )
 
     if "money_flow" in selected:
         mf = raw["money_flow"].get(ts_code, pd.DataFrame()).copy()
