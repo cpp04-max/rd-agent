@@ -349,3 +349,53 @@ finally:
         os.environ["TUSHARE_TOKEN"] = _original_token
 
 print("[runtime-regression] dataset summary + cached latest-sample preview: OK")
+
+
+# P77: trade_cal permission denial must fall back to index_daily dates, and Tushare
+# permission errors must fail on the first request rather than retrying four times.
+_original_data_root_p77 = modern_data.DATA_ROOT
+_original_request_p77 = modern_data._request
+_original_fetch_index_p77 = modern_data._fetch_index_daily
+try:
+    with tempfile.TemporaryDirectory() as tmp:
+        modern_data.DATA_ROOT = Path(tmp) / "market"
+
+        def _deny_trade_cal(pro, endpoint, **kwargs):
+            if endpoint == "trade_cal":
+                raise RuntimeError(
+                    "Tushare endpoint 'trade_cal' permission denied: synthetic permission error"
+                )
+            raise AssertionError("unexpected endpoint in calendar fallback test: " + endpoint)
+
+        modern_data._request = _deny_trade_cal
+        modern_data._fetch_index_daily = lambda pro, start_date, end_date: pd.DataFrame(
+            {
+                "trade_date": ["20261013", "20261014", "20261015"],
+                "close": [3900.0, 3910.0, 3920.0],
+            }
+        )
+        calendar = modern_data._fetch_calendar(object(), "20261013", "20261015")
+        assert [x.strftime("%Y%m%d") for x in calendar] == [
+            "20261013", "20261014", "20261015"
+        ]
+finally:
+    modern_data.DATA_ROOT = _original_data_root_p77
+    modern_data._request = _original_request_p77
+    modern_data._fetch_index_daily = _original_fetch_index_p77
+
+class _PermissionDeniedPro:
+    def __init__(self):
+        self.calls = 0
+    def daily_basic(self, **kwargs):
+        self.calls += 1
+        raise RuntimeError("抱歉，您没有接口(daily_basic)访问权限")
+
+_denied = _PermissionDeniedPro()
+try:
+    modern_data._request(_denied, "daily_basic", ts_code="600519.SH")
+    raise AssertionError("permission-denied request unexpectedly succeeded")
+except RuntimeError as exc:
+    assert "permission denied" in str(exc).lower()
+assert _denied.calls == 1, f"permission error retried unexpectedly: {_denied.calls}"
+
+print("[runtime-regression] optional trade_cal fallback + permission fail-fast: OK")

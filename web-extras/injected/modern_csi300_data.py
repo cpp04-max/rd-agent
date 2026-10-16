@@ -608,14 +608,16 @@ def _live_family_preview(family: str) -> dict[str, Any]:
         raise RuntimeError("The tushare Python package is not installed.") from exc
 
     pro = ts.pro_api(token)
-    trade_days = _preview_trade_days(pro)
-    if not trade_days:
-        raise RuntimeError("Tushare trade_cal returned no recent trading days.")
-    latest = trade_days[-1]
+    # A preview must not require an unrelated privileged endpoint merely to discover
+    # "today's" trading date. Query the selected family over a recent calendar window;
+    # Tushare naturally returns only dates for which that endpoint has observations.
+    latest = pd.Timestamp.utcnow().tz_localize(None).normalize()
     end_date = latest.strftime("%Y%m%d")
     start_45 = (latest - pd.Timedelta(days=45)).strftime("%Y%m%d")
     start_90 = (latest - pd.Timedelta(days=90)).strftime("%Y%m%d")
-    representative_symbol = None
+    representative_symbol = os.environ.get(
+        "RDAGENT_DATA_PREVIEW_SYMBOL", "600519.SH"
+    ).strip() or "600519.SH"
     note = None
 
     if family == "csi300_membership":
@@ -644,7 +646,11 @@ def _live_family_preview(family: str) -> dict[str, Any]:
     elif family == "intraday_market":
         frame = pd.DataFrame()
         last_error = None
-        for day in reversed(trade_days[-5:]):
+        recent_calendar_days = [
+            latest - pd.Timedelta(days=offset)
+            for offset in range(0, 10)
+        ]
+        for day in recent_calendar_days:
             kwargs = {
                 "ts_code": INDEX_CODE,
                 "freq": "5min",
@@ -728,14 +734,6 @@ def _live_family_preview(family: str) -> dict[str, Any]:
                 frame = merged
 
     else:
-        representative_symbol, membership = _preview_representative_symbol(
-            pro, end_date
-        )
-        if not representative_symbol and family != "trading_status":
-            raise RuntimeError(
-                "Could not resolve a current CSI300 constituent for this preview."
-            )
-
         if family == "price_volume":
             daily = _request(
                 pro,
@@ -745,20 +743,31 @@ def _live_family_preview(family: str) -> dict[str, Any]:
                 end_date=end_date,
                 fields="ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount",
             )
-            adj = _request(
-                pro,
-                "adj_factor",
-                ts_code=representative_symbol,
-                start_date=start_45,
-                end_date=end_date,
-                fields="ts_code,trade_date,adj_factor",
-            )
+            adj = pd.DataFrame()
+            adj_error = None
+            try:
+                adj = _request(
+                    pro,
+                    "adj_factor",
+                    ts_code=representative_symbol,
+                    start_date=start_45,
+                    end_date=end_date,
+                    fields="ts_code,trade_date,adj_factor",
+                )
+            except RuntimeError as exc:
+                adj_error = str(exc)
             frame = daily.merge(
                 adj[["trade_date", "adj_factor"]] if not adj.empty
                 else pd.DataFrame(columns=["trade_date", "adj_factor"]),
                 on="trade_date",
                 how="left",
             ) if not daily.empty else daily
+            if adj_error:
+                note = (
+                    "Raw daily prices are accessible, but the adjustment-factor endpoint "
+                    "is not available for this account. Full Modern CSI300 price_volume "
+                    f"still requires adj_factor access. {adj_error}"
+                )
 
         elif family == "daily_basic":
             frame = _request(
@@ -783,10 +792,6 @@ def _live_family_preview(family: str) -> dict[str, Any]:
                     fields="ts_code,trade_date,suspend_timing,suspend_type",
                 )
             except Exception:
-                if not representative_symbol:
-                    representative_symbol, membership = _preview_representative_symbol(
-                        pro, end_date
-                    )
                 frame = _request(
                     pro,
                     "suspend_d",
@@ -955,6 +960,21 @@ def dataset_family_preview(family: str, *, force: bool = False) -> dict[str, Any
                     _write_preview_cache(family, live)
                 except Exception as exc:
                     preview_error = str(exc)
+                    lowered = preview_error.lower()
+                    if (
+                        "访问权限" in preview_error
+                        or "permission denied" in lowered
+                        or "access denied" in lowered
+                    ):
+                        requirement = metadata.get("permission")
+                        if not requirement and metadata.get("required_points"):
+                            requirement = f"{metadata['required_points']}+ Tushare points"
+                        preview_error = (
+                            f"{metadata.get('label') or family} is not enabled for the "
+                            f"current Tushare account"
+                            + (f" (requires {requirement})" if requirement else "")
+                            + f". {preview_error}"
+                        )
 
     if live and live.get("sample", {}).get("rows"):
         sample = live["sample"]
@@ -1073,6 +1093,19 @@ def _request(pro, endpoint: str, *, fields: str | None = None, **kwargs) -> pd.D
             return result
         except Exception as exc:
             last_exc = exc
+            message = str(exc)
+            permission_markers = (
+                "没有接口",
+                "访问权限",
+                "权限",
+                "permission",
+                "access denied",
+                "AccessDenied",
+            )
+            if any(marker.lower() in message.lower() for marker in permission_markers):
+                raise RuntimeError(
+                    f"Tushare endpoint '{endpoint}' permission denied: {message}"
+                ) from exc
             if attempt >= retries:
                 break
             delay = min(8.0, 0.8 * (2 ** (attempt - 1)))
@@ -1129,20 +1162,66 @@ def _fetch_calendar(pro, start_date: str, end_date: str) -> list[pd.Timestamp]:
     path = _raw_path("calendar", f"{start_date}_{end_date}")
     cached = _load_parquet(path)
     if cached.empty:
-        df = _request(
-            pro,
-            "trade_cal",
-            exchange="SSE",
-            start_date=start_date,
-            end_date=end_date,
-            is_open="1",
-            fields="exchange,cal_date,is_open,pretrade_date",
-        )
-        if df.empty:
-            raise RuntimeError("Tushare trade_cal returned no open trading days.")
-        _save_parquet(df, path)
-        cached = df
-    days = pd.to_datetime(cached.loc[cached["is_open"].astype(str) == "1", "cal_date"].astype(str))
+        df = pd.DataFrame()
+        trade_cal_error = None
+        try:
+            df = _request(
+                pro,
+                "trade_cal",
+                exchange="SSE",
+                start_date=start_date,
+                end_date=end_date,
+                is_open="1",
+                fields="exchange,cal_date,is_open,pretrade_date",
+            )
+        except RuntimeError as exc:
+            trade_cal_error = exc
+            print(
+                "[modern-data] trade_cal unavailable; deriving the trading calendar "
+                f"from CSI300 index_daily instead: {exc}",
+                flush=True,
+            )
+
+        if not df.empty:
+            cached = df
+        else:
+            try:
+                index_df = _fetch_index_daily(pro, start_date, end_date)
+            except Exception as index_exc:
+                detail = (
+                    f"trade_cal error: {trade_cal_error}; " if trade_cal_error else ""
+                )
+                raise RuntimeError(
+                    "Could not resolve the China trading calendar. "
+                    f"{detail}index_daily fallback error: {index_exc}"
+                ) from index_exc
+            dates = pd.to_datetime(
+                index_df["trade_date"].astype(str), errors="coerce"
+            ).dropna()
+            if dates.empty:
+                raise RuntimeError(
+                    "CSI300 index_daily fallback returned no usable trading dates."
+                )
+            cached = pd.DataFrame(
+                {
+                    "exchange": "SSE",
+                    "cal_date": dates.dt.strftime("%Y%m%d"),
+                    "is_open": "1",
+                    "pretrade_date": None,
+                    "calendar_source": "index_daily",
+                }
+            ).drop_duplicates("cal_date", keep="last")
+        _save_parquet(cached, path)
+
+    if "cal_date" not in cached.columns:
+        raise RuntimeError("Cached trading calendar is missing cal_date.")
+    if "is_open" in cached.columns:
+        open_mask = cached["is_open"].astype(str) == "1"
+    else:
+        open_mask = pd.Series(True, index=cached.index)
+    days = pd.to_datetime(
+        cached.loc[open_mask, "cal_date"].astype(str), errors="coerce"
+    ).dropna()
     return sorted(pd.Timestamp(x).normalize() for x in days.unique())
 
 

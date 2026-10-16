@@ -167,6 +167,18 @@ checks = {
         "point_in_time_note" in modern_data
         and "sample_source" in modern_data
         and "representative_symbol" in modern_data,
+    "trade_calendar_fallback":
+        "trade_cal unavailable; deriving the trading calendar" in modern_data
+        and '"calendar_source": "index_daily"' in modern_data,
+    "preview_no_trade_cal_dependency":
+        "_preview_trade_days(pro)" not in modern_data[
+            modern_data.find("def _live_family_preview("):
+            modern_data.find("def dataset_family_preview(")
+        ]
+        and 'RDAGENT_DATA_PREVIEW_SYMBOL' in modern_data,
+    "permission_errors_fail_fast":
+        "permission_markers" in modern_data
+        and "permission denied" in modern_data,
 }
 
 failed = [name for name, ok in checks.items() if not ok]
