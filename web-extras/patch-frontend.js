@@ -4522,3 +4522,305 @@ pgS75 =
 
 fs.writeFileSync(pgP75, pgS75);
 console.log("[patch-frontend] P75 modern CSI300 dataset selector applied");
+
+
+// ------------------------- P76: dataset summary + latest sample inspector -------------------------
+const apiPathP76 = "/src/web/src/utils/api.js";
+let apiS76 = fs.readFileSync(apiPathP76, "utf8");
+const previewApiAnchorP76 = "export function getDatasetCatalog() {";
+const previewApiInsertP76 = [
+  "export async function getDatasetPreview(family, refresh = false) {",
+  "    const query = new URLSearchParams({ family });",
+  "    if (refresh) query.set('refresh', '1');",
+  "    const response = await request({",
+  "        url: url + \\"data/preview?\\" + query.toString(),",
+  "        method: 'get'",
+  "    });",
+  "    if (response && typeof response === \\"object\\" && Number(response.status) >= 400) {",
+  "        const payload = response.data && typeof response.data === \\"object\\" ? response.data : {};",
+  "        const error = new Error(payload.error || (\\"Dataset preview failed with HTTP \\" + response.status + \\".\\"));",
+  "        error.response = response;",
+  "        throw error;",
+  "    }",
+  "    if (response && response.data && typeof response.data === \\"object\\" && response.data.family) {",
+  "        return response.data;",
+  "    }",
+  "    return response;",
+  "}",
+  "",
+  "export function getDatasetCatalog() {",
+].join("\n");
+if (!apiS76.includes(previewApiAnchorP76)) {
+  console.error("[patch-frontend] FAILED: P76 dataset preview API anchor drifted.");
+  process.exit(1);
+}
+apiS76 = apiS76.replace(previewApiAnchorP76, previewApiInsertP76);
+fs.writeFileSync(apiPathP76, apiS76);
+
+const pgPathP76 = "/src/web/src/views/Playground.vue";
+let pgS76 = fs.readFileSync(pgPathP76, "utf8");
+const importLineP76 = pgS76
+  .split("\n")
+  .find((line) => line.includes("import {") && line.includes('from "../utils/api";'));
+if (!importLineP76) {
+  console.error("[patch-frontend] FAILED: P76 Playground API import missing.");
+  process.exit(1);
+}
+if (!importLineP76.includes("getDatasetPreview")) {
+  pgS76 = pgS76.replace(
+    importLineP76,
+    importLineP76.replace("import {", "import { getDatasetPreview,")
+  );
+}
+
+const stateP76Old =
+  'const datasetCatalogLoading = ref(false);\n' +
+  'const scenarioName = ref("");';
+const stateP76New =
+  'const datasetCatalogLoading = ref(false);\n' +
+  'const datasetPreviewFamily = ref("");\n' +
+  'const datasetPreview = ref(null);\n' +
+  'const datasetPreviewLoading = ref(false);\n' +
+  'const datasetPreviewError = ref("");\n' +
+  'let datasetPreviewRequestId = 0;\n' +
+  'const scenarioName = ref("");';
+if (!pgS76.includes(stateP76Old)) {
+  console.error("[patch-frontend] FAILED: P76 dataset preview state anchor drifted.");
+  process.exit(1);
+}
+pgS76 = pgS76.replace(stateP76Old, stateP76New);
+
+const helperP76Anchor = "const selectDatasetPreset = (preset) => {";
+const helperP76Insert = [
+  'const datasetPreviewCatalogItem = computed(() =>',
+  '  datasetFamilyCatalog.value.find((item) => item.id === datasetPreviewFamily.value) || null',
+  ');',
+  '',
+  'const inspectDatasetFamily = async (familyId, refresh = false) => {',
+  '  if (!familyId) return;',
+  '  const requestId = ++datasetPreviewRequestId;',
+  '  datasetPreviewFamily.value = familyId;',
+  '  datasetPreviewLoading.value = true;',
+  '  datasetPreviewError.value = "";',
+  '  try {',
+  '    const payload = await getDatasetPreview(familyId, refresh);',
+  '    if (requestId !== datasetPreviewRequestId) return;',
+  '    datasetPreview.value = payload;',
+  '    if (payload?.preview_error && !(payload?.sample?.rows || []).length) {',
+  '      datasetPreviewError.value = payload.preview_error;',
+  '    }',
+  '  } catch (error) {',
+  '    if (requestId !== datasetPreviewRequestId) return;',
+  '    datasetPreview.value = null;',
+  '    datasetPreviewError.value = error?.message || "Could not load the dataset preview.";',
+  '  } finally {',
+  '    if (requestId === datasetPreviewRequestId) {',
+  '      datasetPreviewLoading.value = false;',
+  '    }',
+  '  }',
+  '};',
+  '',
+  'const formatDatasetPreviewValue = (value) => {',
+  '  if (value === null || value === undefined || value === "") return "—";',
+  '  if (typeof value === "number") {',
+  '    if (!Number.isFinite(value)) return "—";',
+  '    const abs = Math.abs(value);',
+  '    if ((abs > 0 && abs < 0.001) || abs >= 1000000) return value.toExponential(4);',
+  '    return Number(value.toPrecision(7)).toString();',
+  '  }',
+  '  return String(value);',
+  '};',
+  '',
+  helperP76Anchor,
+].join("\n");
+if (!pgS76.includes(helperP76Anchor)) {
+  console.error("[patch-frontend] FAILED: P76 helper anchor drifted.");
+  process.exit(1);
+}
+pgS76 = pgS76.replace(helperP76Anchor, helperP76Insert);
+
+const familyLabelP76Old = [
+  '                    <label',
+  '                      class="dataset-family-item"',
+  '                      v-for="family in datasetFamilyCatalog"',
+  '                      :key="family.id"',
+  '                    >',
+].join("\n");
+const familyLabelP76New = [
+  '                    <label',
+  '                      class="dataset-family-item"',
+  '                      :class="{ inspected: datasetPreviewFamily === family.id }"',
+  '                      v-for="family in datasetFamilyCatalog"',
+  '                      :key="family.id"',
+  '                      @click="inspectDatasetFamily(family.id)"',
+  '                    >',
+].join("\n");
+if (!pgS76.includes(familyLabelP76Old)) {
+  console.error("[patch-frontend] FAILED: P76 family-card anchor drifted.");
+  process.exit(1);
+}
+pgS76 = pgS76.replace(familyLabelP76Old, familyLabelP76New);
+
+const inspectorAnchorP76 = [
+  '                  </div>',
+  '                  <p class="dataset-footnote">',
+  '                    Only selected optional families are downloaded. Continue/Branch keeps the frozen provider used by the source trace.',
+].join("\n");
+const inspectorP76 = [
+  '                  </div>',
+  '                  <div class="dataset-preview-card" v-if="datasetPreviewFamily">',
+  '                    <div class="dataset-preview-head">',
+  '                      <div>',
+  '                        <div class="dataset-preview-title">',
+  '                          {{ datasetPreview?.label || datasetPreviewCatalogItem?.label || datasetPreviewFamily }}',
+  '                        </div>',
+  '                        <div class="dataset-preview-description">',
+  '                          {{ datasetPreview?.description || datasetPreviewCatalogItem?.description }}',
+  '                        </div>',
+  '                      </div>',
+  '                      <button',
+  '                        type="button"',
+  '                        class="dataset-preview-refresh"',
+  '                        :disabled="datasetPreviewLoading"',
+  '                        @click.stop="inspectDatasetFamily(datasetPreviewFamily, true)"',
+  '                      >',
+  '                        {{ datasetPreviewLoading ? "Loading…" : "Refresh sample" }}',
+  '                      </button>',
+  '                    </div>',
+  '',
+  '                    <div class="dataset-preview-summary-grid">',
+  '                      <div>',
+  '                        <span>Source</span>',
+  '                        <strong>{{ datasetPreview?.source || datasetPreviewCatalogItem?.source || "—" }}</strong>',
+  '                      </div>',
+  '                      <div>',
+  '                        <span>Permission</span>',
+  '                        <strong>',
+  '                          {{ datasetPreview?.permission || ((datasetPreview?.required_points || datasetPreviewCatalogItem?.required_points) ? ((datasetPreview?.required_points || datasetPreviewCatalogItem?.required_points) + "+ Tushare points") : "special / endpoint-specific") }}',
+  '                        </strong>',
+  '                      </div>',
+  '                      <div>',
+  '                        <span>Cached raw files</span>',
+  '                        <strong>{{ datasetPreview?.cache?.raw_files ?? "—" }}</strong>',
+  '                      </div>',
+  '                      <div>',
+  '                        <span>Latest built through</span>',
+  '                        <strong>{{ datasetPreview?.cache?.latest_build_through || "not built yet" }}</strong>',
+  '                      </div>',
+  '                    </div>',
+  '',
+  '                    <div class="dataset-preview-note" v-if="datasetPreview?.point_in_time_note">',
+  '                      <strong>Point-in-time rule</strong>',
+  '                      <span>{{ datasetPreview.point_in_time_note }}</span>',
+  '                    </div>',
+  '',
+  '                    <div class="dataset-preview-fields">',
+  '                      <strong>Fields available to RD-Agent</strong>',
+  '                      <div class="dataset-preview-chip-row">',
+  '                        <code',
+  '                          v-for="field in (datasetPreview?.qlib_fields || datasetPreviewCatalogItem?.fields || [])"',
+  '                          :key="field"',
+  '                        >{{ field }}</code>',
+  '                      </div>',
+  '                    </div>',
+  '',
+  '                    <div class="dataset-preview-sample-head">',
+  '                      <div>',
+  '                        <strong>Latest sample</strong>',
+  '                        <span v-if="datasetPreview?.sample_source">',
+  '                          {{ datasetPreview.sample_source }}',
+  '                          <template v-if="datasetPreview?.representative_symbol"> · {{ datasetPreview.representative_symbol }}</template>',
+  '                          <template v-if="datasetPreview?.sample_as_of"> · through {{ datasetPreview.sample_as_of.slice(0, 10) }}</template>',
+  '                        </span>',
+  '                      </div>',
+  '                    </div>',
+  '                    <div class="dataset-preview-loading" v-if="datasetPreviewLoading">',
+  '                      Loading the latest sample…',
+  '                    </div>',
+  '                    <div class="dataset-preview-error" v-else-if="datasetPreviewError">',
+  '                      {{ datasetPreviewError }}',
+  '                    </div>',
+  '                    <div',
+  '                      class="dataset-preview-table-wrap"',
+  '                      v-else-if="(datasetPreview?.sample?.rows || []).length"',
+  '                    >',
+  '                      <table class="dataset-preview-table">',
+  '                        <thead>',
+  '                          <tr>',
+  '                            <th v-for="column in datasetPreview.sample.columns" :key="column">{{ column }}</th>',
+  '                          </tr>',
+  '                        </thead>',
+  '                        <tbody>',
+  '                          <tr v-for="(row, rowIndex) in datasetPreview.sample.rows" :key="rowIndex">',
+  '                            <td v-for="column in datasetPreview.sample.columns" :key="column">',
+  '                              {{ formatDatasetPreviewValue(row[column]) }}',
+  '                            </td>',
+  '                          </tr>',
+  '                        </tbody>',
+  '                      </table>',
+  '                    </div>',
+  '                    <div class="dataset-preview-empty" v-else>',
+  '                      No sample rows are available yet.',
+  '                    </div>',
+  '                    <div class="dataset-preview-sample-note" v-if="datasetPreview?.sample_note">',
+  '                      {{ datasetPreview.sample_note }}',
+  '                    </div>',
+  '                    <div',
+  '                      class="dataset-preview-warning"',
+  '                      v-if="datasetPreview?.preview_error && (datasetPreview?.sample?.rows || []).length"',
+  '                    >',
+  '                      Live refresh warning: {{ datasetPreview.preview_error }}',
+  '                    </div>',
+  '                  </div>',
+  '                  <p class="dataset-footnote">',
+  '                    Only selected optional families are downloaded. Continue/Branch keeps the frozen provider used by the source trace.',
+].join("\n");
+if (!pgS76.includes(inspectorAnchorP76)) {
+  console.error("[patch-frontend] FAILED: P76 inspector insertion anchor drifted.");
+  process.exit(1);
+}
+pgS76 = pgS76.replace(inspectorAnchorP76, inspectorP76);
+
+const styleEndP76 = "</style>";
+const styleP76 = [
+  '',
+  '.dataset-family-item.inspected { border-color:#9fb5ee; box-shadow:0 0 0 2px rgba(103,132,205,.10); }',
+  '.dataset-preview-card { margin-top:.8em; padding:.8em; border:1px solid #dfe5f0; border-radius:12px; background:#fbfcff; }',
+  '.dataset-preview-head { display:flex; justify-content:space-between; align-items:flex-start; gap:1em; }',
+  '.dataset-preview-title { font-size:.9em; font-weight:800; color:var(--text-color); }',
+  '.dataset-preview-description { margin-top:.16em; max-width:70em; color:#727d90; font-size:.72em; line-height:1.45; }',
+  '.dataset-preview-refresh { width:auto !important; height:auto !important; padding:.36em .7em !important; border:1px solid #d3dceb !important; border-radius:999px !important; background:#fff !important; color:#52627e !important; font-size:.68em !important; text-transform:none !important; box-shadow:none !important; white-space:nowrap; }',
+  '.dataset-preview-summary-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:.5em; margin-top:.65em; }',
+  '.dataset-preview-summary-grid > div { padding:.52em .6em; border:1px solid #e7ebf2; border-radius:9px; background:#fff; min-width:0; }',
+  '.dataset-preview-summary-grid span { display:block; color:#9299a7; font-size:.62em; }',
+  '.dataset-preview-summary-grid strong { display:block; margin-top:.1em; color:#4e596d; font-size:.69em; overflow-wrap:anywhere; }',
+  '.dataset-preview-note { display:flex; gap:.55em; margin-top:.62em; padding:.55em .62em; border-radius:9px; background:#f3f6fc; color:#657188; font-size:.69em; line-height:1.45; }',
+  '.dataset-preview-note strong { flex:none; color:#4d5c76; }',
+  '.dataset-preview-fields { margin-top:.65em; color:#58657b; font-size:.69em; }',
+  '.dataset-preview-chip-row { display:flex; flex-wrap:wrap; gap:.28em; margin-top:.35em; }',
+  '.dataset-preview-chip-row code { padding:.18em .38em; border:1px solid #e0e6f0; border-radius:6px; background:#fff; color:#4d5e7b; font-size:.92em; }',
+  '.dataset-preview-sample-head { display:flex; justify-content:space-between; margin-top:.72em; color:#526079; font-size:.72em; }',
+  '.dataset-preview-sample-head strong, .dataset-preview-sample-head span { display:block; }',
+  '.dataset-preview-sample-head span { margin-top:.12em; color:#8a93a3; font-size:.9em; }',
+  '.dataset-preview-loading, .dataset-preview-error, .dataset-preview-empty, .dataset-preview-warning { margin-top:.48em; padding:.55em .65em; border-radius:8px; font-size:.69em; }',
+  '.dataset-preview-loading, .dataset-preview-empty { background:#f5f7fb; color:#778296; }',
+  '.dataset-preview-error, .dataset-preview-warning { background:#fff4f4; color:#a33f3f; }',
+  '.dataset-preview-table-wrap { margin-top:.45em; max-width:100%; overflow:auto; border:1px solid #e4e8f0; border-radius:9px; background:#fff; }',
+  '.dataset-preview-table { width:max-content; min-width:100%; border-collapse:collapse; font-size:.66em; }',
+  '.dataset-preview-table th, .dataset-preview-table td { padding:.45em .55em; border-bottom:1px solid #eef1f5; border-right:1px solid #f1f3f7; text-align:right; white-space:nowrap; }',
+  '.dataset-preview-table th { position:sticky; top:0; z-index:1; background:#f7f9fc; color:#667187; font-weight:700; }',
+  '.dataset-preview-table td { color:#4f596b; }',
+  '.dataset-preview-table th:first-child, .dataset-preview-table td:first-child { text-align:left; }',
+  '.dataset-preview-sample-note { margin-top:.38em; color:#828c9d; font-size:.64em; line-height:1.4; }',
+  '@media (max-width: 900px) { .dataset-preview-summary-grid { grid-template-columns:1fr 1fr; } .dataset-preview-head { flex-direction:column; } }',
+  '',
+].join("\n");
+const stylePosP76 = pgS76.lastIndexOf(styleEndP76);
+if (stylePosP76 < 0) {
+  console.error("[patch-frontend] FAILED: P76 style end missing.");
+  process.exit(1);
+}
+pgS76 = pgS76.slice(0, stylePosP76) + styleP76 + pgS76.slice(stylePosP76);
+
+fs.writeFileSync(pgPathP76, pgS76);
+console.log("[patch-frontend] P76 dataset inspector applied");

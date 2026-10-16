@@ -156,6 +156,17 @@ checks = {
         "FACTOR_COSTEER_DATA_FOLDER" in modern_data
         and "FACTOR_COSTEER_DATA_FOLDER_DEBUG" in modern_data
         and '"factor_source"' in modern_data,
+    "dataset_preview_endpoint":
+        '@app.route("/data/preview"' in server
+        and "dataset_family_preview" in server,
+    "dataset_preview_isolation":
+        "def _live_family_preview(" in modern_data
+        and 'DATA_ROOT / "preview"' in modern_data
+        and "_cache_full_history(" not in modern_data[modern_data.find("def _live_family_preview("):modern_data.find("def dataset_family_preview(")],
+    "dataset_preview_metadata":
+        "point_in_time_note" in modern_data
+        and "sample_source" in modern_data
+        and "representative_symbol" in modern_data,
 }
 
 failed = [name for name, ok in checks.items() if not ok]

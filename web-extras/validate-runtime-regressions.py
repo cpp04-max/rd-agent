@@ -313,3 +313,38 @@ for field in (
 assert intraday.iloc[0]["$idx5m_rv"] >= 0.0
 
 print("[runtime-regression] suspension preservation + intraday market aggregation: OK")
+
+
+# P76: dataset inspector must be able to summarize a locally cached family without
+# Tushare/network access, and preview rows must serialize cleanly for Flask JSON.
+_original_data_root = modern_data.DATA_ROOT
+_original_token = os.environ.pop("TUSHARE_TOKEN", None)
+try:
+    with tempfile.TemporaryDirectory() as tmp:
+        modern_data.DATA_ROOT = Path(tmp) / "market"
+        cached_dir = modern_data.DATA_ROOT / "raw" / "daily_basic"
+        cached_dir.mkdir(parents=True, exist_ok=True)
+        pd.DataFrame(
+            {
+                "ts_code": ["600000.SH", "600000.SH"],
+                "trade_date": ["20261014", "20261015"],
+                "turnover_rate": [0.8, 0.9],
+                "pe_ttm": [6.1, 6.2],
+                "pb": [0.7, 0.71],
+                "total_mv": [25000000.0, 25200000.0],
+            }
+        ).to_parquet(cached_dir / "600000_SH.parquet", index=False)
+
+        preview = modern_data.dataset_family_preview("daily_basic")
+        assert preview["family"] == "daily_basic"
+        assert preview["sample_source"] == "persistent raw-data cache"
+        assert preview["sample"]["rows"][0]["trade_date"] == "20261015"
+        assert preview["cache"]["raw_files"] == 1
+        assert "$db_pb" in preview["qlib_fields"]
+        json.dumps(preview, allow_nan=False)
+finally:
+    modern_data.DATA_ROOT = _original_data_root
+    if _original_token is not None:
+        os.environ["TUSHARE_TOKEN"] = _original_token
+
+print("[runtime-regression] dataset summary + cached latest-sample preview: OK")

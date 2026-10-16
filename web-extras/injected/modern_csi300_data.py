@@ -336,6 +336,679 @@ def dataset_catalog() -> dict[str, Any]:
     }
 
 
+
+_PREVIEW_TTL_SECONDS = int(os.environ.get("RDAGENT_DATA_PREVIEW_TTL_SECONDS", "900"))
+_PREVIEW_ROWS = max(1, min(20, int(os.environ.get("RDAGENT_DATA_PREVIEW_ROWS", "5"))))
+
+_PREVIEW_PIT_NOTES = {
+    "price_volume": "Daily bar information is intended for prediction after that trading day's close. Adjustment factors are merged by trade_date.",
+    "csi300_membership": "Uses historical CSI300 snapshots instead of today's members, preventing current-universe survivorship leakage.",
+    "daily_basic": "Daily valuation/liquidity snapshot. Use day-t values only for predictions made after the day-t close.",
+    "trading_status": "Official suspension/resumption records. Suspended dates remain explicit and prices are not forward-filled.",
+    "intraday_market": "Aggregated from same-day CSI300 5-minute bars. These features are only valid after the source bars have occurred.",
+    "industry": "Industry membership is bounded by in_date/out_date rather than backfilling today's classification through history.",
+    "market_context": "CSI300 market context is calculated from contemporaneous index history and is suitable for next-session targets when lagged by the experiment design.",
+    "if_futures": "Main-contract IF context is aligned by trade_date; the preview reports contract and derived market-context fields where available.",
+    "fundamentals": "Financial indicators enter the model from ann_date, never from the fiscal period end date.",
+    "money_flow": "Daily active-order flow aggregates are post-trade information for that session.",
+    "margin": "Daily financing/securities-lending values are aligned by trade_date.",
+    "northbound": "Holding data are used when the legacy endpoint is available; newer Stock Connect eligibility is kept distinct from holding size.",
+}
+
+_PREVIEW_COLUMNS = {
+    "price_volume": ["ts_code", "trade_date", "open", "high", "low", "close", "vol", "amount", "adj_factor"],
+    "csi300_membership": ["index_code", "con_code", "trade_date", "weight"],
+    "daily_basic": [
+        "ts_code", "trade_date", "turnover_rate", "turnover_rate_f", "volume_ratio",
+        "pe_ttm", "pb", "ps_ttm", "dv_ttm", "total_mv", "circ_mv",
+    ],
+    "trading_status": ["ts_code", "trade_date", "suspend_timing", "suspend_type"],
+    "intraday_market": ["datetime", "$idx5m_rv", "$idx5m_range", "$idx5m_last30", "$idx5m_last_hour_vol_share"],
+    "industry": ["ts_code", "name", "l1_code", "l1_name", "in_date", "out_date", "is_new"],
+    "market_context": ["datetime", "$mkt_return_1d", "$mkt_mom20", "$mkt_vol20", "$mkt_amount_log"],
+    "if_futures": [
+        "trade_date", "mapping_ts_code", "close", "vol", "oi",
+        "$if_return_1d", "$if_basis", "$if_vol_log", "$if_oi_log",
+    ],
+    "fundamentals": [
+        "ts_code", "ann_date", "end_date", "eps", "roe", "roa", "grossprofit_margin",
+        "debt_to_assets", "current_ratio", "netprofit_yoy", "q_sales_yoy", "q_profit_yoy",
+    ],
+    "money_flow": [
+        "ts_code", "trade_date", "buy_sm_amount", "sell_sm_amount",
+        "buy_lg_amount", "sell_lg_amount", "buy_elg_amount", "sell_elg_amount",
+        "net_mf_amount",
+    ],
+    "margin": ["ts_code", "trade_date", "rzrqye", "rqye", "rzmre", "rqmcl"],
+    "northbound": ["ts_code", "trade_date", "name", "eligible", "ratio", "vol", "type", "type_name"],
+}
+
+
+def _preview_json_value(value: Any) -> Any:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    if isinstance(value, (pd.Timestamp, datetime)):
+        return value.isoformat()
+    if isinstance(value, np.generic):
+        value = value.item()
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    return str(value)
+
+
+def _preview_sort_column(df: pd.DataFrame) -> str | None:
+    for column in (
+        "trade_time", "datetime", "trade_date", "ann_date",
+        "end_date", "in_date", "out_date",
+    ):
+        if column in df.columns and df[column].notna().any():
+            return column
+    return None
+
+
+def _preview_frame_payload(
+    family: str,
+    frame: pd.DataFrame,
+    *,
+    row_count: int = _PREVIEW_ROWS,
+) -> dict[str, Any]:
+    if frame is None or frame.empty:
+        return {"columns": [], "rows": [], "as_of": None}
+
+    data = frame.copy()
+    sort_col = _preview_sort_column(data)
+    if sort_col is not None:
+        sort_values = pd.to_datetime(data[sort_col].astype(str), errors="coerce")
+        data = data.assign(__preview_sort=sort_values).sort_values(
+            "__preview_sort", ascending=False, na_position="last"
+        ).drop(columns=["__preview_sort"])
+
+    preferred = [
+        column for column in _PREVIEW_COLUMNS.get(family, [])
+        if column in data.columns
+    ]
+    if preferred:
+        data = data[preferred]
+    else:
+        data = data.iloc[:, : min(14, len(data.columns))]
+
+    data = data.head(row_count)
+    rows = [
+        {str(column): _preview_json_value(value) for column, value in row.items()}
+        for row in data.to_dict(orient="records")
+    ]
+
+    as_of = None
+    if sort_col is not None and sort_col in frame.columns:
+        parsed = pd.to_datetime(frame[sort_col].astype(str), errors="coerce").dropna()
+        if not parsed.empty:
+            as_of = parsed.max().isoformat()
+
+    return {
+        "columns": [str(column) for column in data.columns],
+        "rows": rows,
+        "as_of": as_of,
+    }
+
+
+def _preview_raw_root(family: str) -> Path:
+    return DATA_ROOT / "raw" / family
+
+
+def _cached_family_preview(family: str) -> dict[str, Any]:
+    root = _preview_raw_root(family)
+    if not root.exists():
+        return {
+            "cached_files": 0,
+            "sample": {"columns": [], "rows": [], "as_of": None},
+            "representative_symbol": None,
+        }
+
+    paths = list(root.glob("*.parquet"))
+    if family == "price_volume":
+        daily = [path for path in paths if path.name.endswith("_daily.parquet")]
+        if daily:
+            paths = daily
+    paths = sorted(
+        paths,
+        key=lambda path: path.stat().st_mtime if path.exists() else 0.0,
+        reverse=True,
+    )
+
+    frames = []
+    representative_symbol = None
+    for path in paths[:4]:
+        frame = _load_parquet(path)
+        if frame.empty:
+            continue
+        frames.append(frame)
+        if representative_symbol is None and "ts_code" in frame.columns:
+            symbols = frame["ts_code"].dropna().astype(str)
+            if not symbols.empty:
+                representative_symbol = symbols.iloc[0]
+        if sum(len(item) for item in frames) >= 50:
+            break
+
+    combined = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+    if family == "market_context" and not combined.empty:
+        try:
+            combined = _build_index_context(combined)
+        except Exception:
+            pass
+    elif family == "intraday_market" and not combined.empty:
+        try:
+            combined = _build_intraday_market_context(combined)
+        except Exception:
+            pass
+
+    return {
+        "cached_files": len(paths),
+        "sample": _preview_frame_payload(family, combined),
+        "representative_symbol": representative_symbol,
+    }
+
+
+def _preview_cache_file(family: str) -> Path:
+    path = DATA_ROOT / "preview"
+    path.mkdir(parents=True, exist_ok=True)
+    return path / f"{family}.json"
+
+
+def _read_preview_cache(family: str) -> dict[str, Any] | None:
+    path = _preview_cache_file(family)
+    if not path.exists():
+        return None
+    try:
+        if (time.time() - path.stat().st_mtime) > _PREVIEW_TTL_SECONDS:
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else None
+    except Exception:
+        return None
+
+
+def _write_preview_cache(family: str, payload: dict[str, Any]) -> None:
+    path = _preview_cache_file(family)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload, indent=2, allow_nan=False), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _preview_trade_days(pro, lookback_days: int = 60) -> list[pd.Timestamp]:
+    end = pd.Timestamp.utcnow().tz_localize(None).normalize()
+    start = end - pd.Timedelta(days=max(lookback_days, 20))
+    frame = _request(
+        pro,
+        "trade_cal",
+        exchange="SSE",
+        start_date=start.strftime("%Y%m%d"),
+        end_date=end.strftime("%Y%m%d"),
+        is_open="1",
+        fields="exchange,cal_date,is_open,pretrade_date",
+    )
+    if frame.empty:
+        return []
+    dates = pd.to_datetime(frame["cal_date"].astype(str), errors="coerce").dropna()
+    return sorted(pd.Timestamp(value).normalize() for value in dates.unique())
+
+
+def _preview_membership_snapshot(pro, end_date: str) -> pd.DataFrame:
+    end = pd.Timestamp(end_date)
+    frame = pd.DataFrame()
+    for days in (45, 120):
+        start = (end - pd.Timedelta(days=days)).strftime("%Y%m%d")
+        frame = _request(
+            pro,
+            "index_weight",
+            index_code=INDEX_CODE,
+            start_date=start,
+            end_date=end.strftime("%Y%m%d"),
+            fields="index_code,con_code,trade_date,weight",
+        )
+        if frame.empty and INDEX_CODE != INDEX_CODE_FALLBACK:
+            frame = _request(
+                pro,
+                "index_weight",
+                index_code=INDEX_CODE_FALLBACK,
+                start_date=start,
+                end_date=end.strftime("%Y%m%d"),
+                fields="index_code,con_code,trade_date,weight",
+            )
+        if not frame.empty:
+            break
+    if frame.empty:
+        return frame
+    latest = str(frame["trade_date"].astype(str).max())
+    current = frame.loc[frame["trade_date"].astype(str) == latest].copy()
+    current["weight"] = pd.to_numeric(current.get("weight"), errors="coerce")
+    return current.sort_values(["weight", "con_code"], ascending=[False, True])
+
+
+def _preview_representative_symbol(pro, end_date: str) -> tuple[str | None, pd.DataFrame]:
+    membership = _preview_membership_snapshot(pro, end_date)
+    if membership.empty:
+        return None, membership
+    symbols = membership["con_code"].dropna().astype(str)
+    return (symbols.iloc[0] if not symbols.empty else None), membership
+
+
+def _live_family_preview(family: str) -> dict[str, Any]:
+    token = os.environ.get("TUSHARE_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("TUSHARE_TOKEN is not configured.")
+
+    try:
+        import tushare as ts
+    except ImportError as exc:
+        raise RuntimeError("The tushare Python package is not installed.") from exc
+
+    pro = ts.pro_api(token)
+    trade_days = _preview_trade_days(pro)
+    if not trade_days:
+        raise RuntimeError("Tushare trade_cal returned no recent trading days.")
+    latest = trade_days[-1]
+    end_date = latest.strftime("%Y%m%d")
+    start_45 = (latest - pd.Timedelta(days=45)).strftime("%Y%m%d")
+    start_90 = (latest - pd.Timedelta(days=90)).strftime("%Y%m%d")
+    representative_symbol = None
+    note = None
+
+    if family == "csi300_membership":
+        frame = _preview_membership_snapshot(pro, end_date)
+
+    elif family == "market_context":
+        frame = _request(
+            pro,
+            "index_daily",
+            ts_code=INDEX_CODE,
+            start_date=start_90,
+            end_date=end_date,
+            fields="ts_code,trade_date,close,open,high,low,pre_close,change,pct_chg,vol,amount",
+        )
+        if frame.empty and INDEX_CODE != INDEX_CODE_FALLBACK:
+            frame = _request(
+                pro,
+                "index_daily",
+                ts_code=INDEX_CODE_FALLBACK,
+                start_date=start_90,
+                end_date=end_date,
+                fields="ts_code,trade_date,close,open,high,low,pre_close,change,pct_chg,vol,amount",
+            )
+        frame = _build_index_context(frame) if not frame.empty else frame
+
+    elif family == "intraday_market":
+        frame = pd.DataFrame()
+        last_error = None
+        for day in reversed(trade_days[-5:]):
+            kwargs = {
+                "ts_code": INDEX_CODE,
+                "freq": "5min",
+                "start_date": f"{day:%Y-%m-%d} 09:00:00",
+                "end_date": f"{day:%Y-%m-%d} 16:00:00",
+                "fields": "ts_code,trade_time,open,close,high,low,vol,amount",
+            }
+            try:
+                bars = _request(pro, "idx_mins", **kwargs)
+                if bars.empty and INDEX_CODE != INDEX_CODE_FALLBACK:
+                    kwargs["ts_code"] = INDEX_CODE_FALLBACK
+                    bars = _request(pro, "idx_mins", **kwargs)
+                if not bars.empty:
+                    frame = _build_intraday_market_context(bars)
+                    break
+            except Exception as exc:
+                last_error = exc
+                break
+        if frame.empty and last_error is not None:
+            raise RuntimeError(
+                "Historical CSI300 minute preview is unavailable for this account: "
+                f"{last_error}"
+            ) from last_error
+
+    elif family == "if_futures":
+        mapping = _request(
+            pro,
+            "fut_mapping",
+            ts_code="IF.CFX",
+            start_date=start_45,
+            end_date=end_date,
+            fields="ts_code,trade_date,mapping_ts_code",
+        )
+        if mapping.empty:
+            frame = mapping
+        else:
+            mapping = mapping.sort_values("trade_date")
+            contracts = list(
+                mapping["mapping_ts_code"].dropna().astype(str).unique()
+            )[-2:]
+            fut_frames = []
+            for contract in contracts:
+                part = _request(
+                    pro,
+                    "fut_daily",
+                    ts_code=contract,
+                    start_date=start_45,
+                    end_date=end_date,
+                    fields="ts_code,trade_date,pre_close,pre_settle,open,high,low,close,settle,vol,amount,oi,oi_chg",
+                )
+                if not part.empty:
+                    fut_frames.append(part)
+            fut = pd.concat(fut_frames, ignore_index=True) if fut_frames else pd.DataFrame()
+            merged = (
+                mapping.merge(
+                    fut,
+                    left_on=["trade_date", "mapping_ts_code"],
+                    right_on=["trade_date", "ts_code"],
+                    how="left",
+                    suffixes=("", "_contract"),
+                )
+                if not fut.empty else mapping
+            )
+            index_df = _request(
+                pro,
+                "index_daily",
+                ts_code=INDEX_CODE,
+                start_date=start_45,
+                end_date=end_date,
+                fields="ts_code,trade_date,close,amount",
+            )
+            if not fut.empty and not index_df.empty:
+                context = _build_futures_context(merged, index_df)
+                frame = merged.merge(
+                    context,
+                    left_on=pd.to_datetime(merged["trade_date"].astype(str)),
+                    right_on="datetime",
+                    how="left",
+                ).drop(columns=["key_0"], errors="ignore")
+            else:
+                frame = merged
+
+    else:
+        representative_symbol, membership = _preview_representative_symbol(
+            pro, end_date
+        )
+        if not representative_symbol and family != "trading_status":
+            raise RuntimeError(
+                "Could not resolve a current CSI300 constituent for this preview."
+            )
+
+        if family == "price_volume":
+            daily = _request(
+                pro,
+                "daily",
+                ts_code=representative_symbol,
+                start_date=start_45,
+                end_date=end_date,
+                fields="ts_code,trade_date,open,high,low,close,pre_close,change,pct_chg,vol,amount",
+            )
+            adj = _request(
+                pro,
+                "adj_factor",
+                ts_code=representative_symbol,
+                start_date=start_45,
+                end_date=end_date,
+                fields="ts_code,trade_date,adj_factor",
+            )
+            frame = daily.merge(
+                adj[["trade_date", "adj_factor"]] if not adj.empty
+                else pd.DataFrame(columns=["trade_date", "adj_factor"]),
+                on="trade_date",
+                how="left",
+            ) if not daily.empty else daily
+
+        elif family == "daily_basic":
+            frame = _request(
+                pro,
+                "daily_basic",
+                ts_code=representative_symbol,
+                start_date=start_45,
+                end_date=end_date,
+                fields=(
+                    "ts_code,trade_date,close,turnover_rate,turnover_rate_f,volume_ratio,"
+                    "pe_ttm,pb,ps_ttm,dv_ttm,total_share,float_share,free_share,total_mv,circ_mv"
+                ),
+            )
+
+        elif family == "trading_status":
+            try:
+                frame = _request(
+                    pro,
+                    "suspend_d",
+                    start_date=(latest - pd.Timedelta(days=180)).strftime("%Y%m%d"),
+                    end_date=end_date,
+                    fields="ts_code,trade_date,suspend_timing,suspend_type",
+                )
+            except Exception:
+                if not representative_symbol:
+                    representative_symbol, membership = _preview_representative_symbol(
+                        pro, end_date
+                    )
+                frame = _request(
+                    pro,
+                    "suspend_d",
+                    ts_code=representative_symbol,
+                    start_date=(latest - pd.Timedelta(days=365)).strftime("%Y%m%d"),
+                    end_date=end_date,
+                    fields="ts_code,trade_date,suspend_timing,suspend_type",
+                )
+            if frame.empty:
+                note = "No suspension events were returned in the recent preview window."
+
+        elif family == "industry":
+            frames = []
+            for is_new in ("Y", "N"):
+                part = _request(
+                    pro,
+                    "index_member_all",
+                    ts_code=representative_symbol,
+                    is_new=is_new,
+                    fields="l1_code,l1_name,l2_code,l2_name,l3_code,l3_name,ts_code,name,in_date,out_date,is_new",
+                )
+                if not part.empty:
+                    frames.append(part)
+            frame = (
+                pd.concat(frames, ignore_index=True).drop_duplicates()
+                if frames else pd.DataFrame()
+            )
+
+        elif family == "fundamentals":
+            frame = _request(
+                pro,
+                "fina_indicator",
+                ts_code=representative_symbol,
+                start_date=(latest - pd.Timedelta(days=800)).strftime("%Y%m%d"),
+                end_date=end_date,
+                fields=(
+                    "ts_code,ann_date,end_date,eps,roe,roa,grossprofit_margin,"
+                    "debt_to_assets,current_ratio,netprofit_yoy,q_sales_yoy,q_profit_yoy,update_flag"
+                ),
+            )
+
+        elif family == "money_flow":
+            frame = _request(
+                pro,
+                "moneyflow",
+                ts_code=representative_symbol,
+                start_date=start_90,
+                end_date=end_date,
+                fields=(
+                    "ts_code,trade_date,buy_sm_amount,sell_sm_amount,buy_md_amount,sell_md_amount,"
+                    "buy_lg_amount,sell_lg_amount,buy_elg_amount,sell_elg_amount,net_mf_amount"
+                ),
+            )
+
+        elif family == "margin":
+            frame = _request(
+                pro,
+                "margin_detail",
+                ts_code=representative_symbol,
+                start_date=start_90,
+                end_date=end_date,
+                fields="trade_date,ts_code,rzye,rqye,rzmre,rqyl,rzche,rqchl,rqmcl,rzrqye",
+            )
+
+        elif family == "northbound":
+            frame = pd.DataFrame()
+            try:
+                frame = _request(
+                    pro,
+                    "hk_hold",
+                    ts_code=representative_symbol,
+                    start_date=(latest - pd.Timedelta(days=180)).strftime("%Y%m%d"),
+                    end_date=end_date,
+                    fields="code,trade_date,ts_code,name,vol,ratio,exchange",
+                )
+                if not frame.empty:
+                    frame["eligible"] = 1.0
+            except Exception:
+                frame = pd.DataFrame()
+            if frame.empty:
+                fallback_start = max(
+                    pd.Timestamp("2025-08-12"),
+                    latest - pd.Timedelta(days=180),
+                ).strftime("%Y%m%d")
+                frames = []
+                for connect_type in ("HK_SH", "HK_SZ"):
+                    try:
+                        part = _request(
+                            pro,
+                            "stock_hsgt",
+                            ts_code=representative_symbol,
+                            type=connect_type,
+                            start_date=fallback_start,
+                            end_date=end_date,
+                            fields="ts_code,trade_date,type,name,type_name",
+                        )
+                    except Exception:
+                        part = pd.DataFrame()
+                    if not part.empty:
+                        frames.append(part)
+                frame = (
+                    pd.concat(frames, ignore_index=True).drop_duplicates(
+                        ["trade_date", "ts_code"], keep="last"
+                    )
+                    if frames else pd.DataFrame()
+                )
+                if not frame.empty:
+                    frame["eligible"] = 1.0
+                    frame["ratio"] = np.nan
+                    frame["vol"] = np.nan
+                    note = "Showing modern Stock Connect eligibility; holding size is unavailable from this fallback endpoint."
+
+        else:
+            raise ValueError(f"Unsupported dataset preview family: {family}")
+
+    sample = _preview_frame_payload(family, frame)
+    return {
+        "sample": sample,
+        "representative_symbol": representative_symbol,
+        "note": note,
+        "fetched_at": _now_iso(),
+    }
+
+
+def dataset_family_preview(family: str, *, force: bool = False) -> dict[str, Any]:
+    family = str(family or "").strip()
+    if family not in FAMILY_CATALOG:
+        raise ValueError(f"Unknown dataset family: {family or '<empty>'}")
+
+    metadata = dict(FAMILY_CATALOG[family])
+    cached = _cached_family_preview(family)
+    latest_manifest = None
+    latest_manifest_path = DATA_ROOT / "latest_manifest.json"
+    if latest_manifest_path.exists():
+        try:
+            latest_manifest = json.loads(
+                latest_manifest_path.read_text(encoding="utf-8")
+            )
+        except Exception:
+            latest_manifest = None
+
+    build_info = {
+        "included_in_latest_build": bool(
+            isinstance(latest_manifest, dict)
+            and family in latest_manifest.get("families", [])
+        ),
+        "latest_build_through": (
+            latest_manifest.get("resolved_end")
+            if isinstance(latest_manifest, dict) else None
+        ),
+        "latest_build_stock_count": (
+            latest_manifest.get("stock_count")
+            if isinstance(latest_manifest, dict) else None
+        ),
+    }
+
+    preview_error = None
+    live = None if force else _read_preview_cache(family)
+    if live is None and os.environ.get("TUSHARE_TOKEN", "").strip():
+        lock = FileLock(str(_preview_cache_file(family)) + ".lock")
+        with lock:
+            live = None if force else _read_preview_cache(family)
+            if live is None:
+                try:
+                    live = _live_family_preview(family)
+                    _write_preview_cache(family, live)
+                except Exception as exc:
+                    preview_error = str(exc)
+
+    if live and live.get("sample", {}).get("rows"):
+        sample = live["sample"]
+        sample_source = "Tushare live preview"
+        representative_symbol = live.get("representative_symbol")
+        sample_note = live.get("note")
+        fetched_at = live.get("fetched_at")
+    elif cached["sample"].get("rows"):
+        sample = cached["sample"]
+        sample_source = "persistent raw-data cache"
+        representative_symbol = cached.get("representative_symbol")
+        sample_note = (
+            "Live preview was unavailable; showing the newest locally cached rows."
+            if preview_error else
+            "Showing the newest locally cached rows."
+        )
+        fetched_at = None
+    else:
+        sample = {"columns": [], "rows": [], "as_of": None}
+        sample_source = None
+        representative_symbol = None
+        sample_note = None
+        fetched_at = None
+        if preview_error is None and not os.environ.get("TUSHARE_TOKEN", "").strip():
+            preview_error = (
+                "No cached sample is available and TUSHARE_TOKEN is not configured."
+            )
+
+    return {
+        "family": family,
+        "label": metadata.get("label"),
+        "description": metadata.get("description"),
+        "source": metadata.get("source"),
+        "required": bool(metadata.get("required")),
+        "required_points": metadata.get("required_points"),
+        "permission": metadata.get("permission"),
+        "qlib_fields": list(metadata.get("fields", [])),
+        "model_features": dict(metadata.get("model_features", {})),
+        "point_in_time_note": _PREVIEW_PIT_NOTES.get(family),
+        "token_configured": bool(os.environ.get("TUSHARE_TOKEN", "").strip()),
+        "cache": {
+            "raw_files": cached.get("cached_files", 0),
+            **build_info,
+        },
+        "sample": sample,
+        "sample_source": sample_source,
+        "sample_as_of": sample.get("as_of"),
+        "representative_symbol": representative_symbol,
+        "sample_note": sample_note,
+        "fetched_at": fetched_at,
+        "preview_error": preview_error,
+    }
+
+
 def qlib_fields_for_config(config: dict[str, Any]) -> list[str]:
     if config.get("mode") != "modern":
         return ["$open", "$close", "$high", "$low", "$volume", "$factor"]

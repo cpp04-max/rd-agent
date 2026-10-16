@@ -27,6 +27,10 @@ const checks = {
   datasetPresets: playground.includes("Recommended") && playground.includes("Select all"),
   datasetCatalogLoadedOnMount: playground.includes("void loadDatasetCatalog();"),
   datasetPermissionHints: playground.includes("family.permission") && playground.includes("Tushare points"),
+  datasetPreviewApi: api.includes("getDatasetPreview") && api.includes("data/preview"),
+  datasetInspectorUi: playground.includes("dataset-preview-card") && playground.includes("Latest sample") && playground.includes("Refresh sample"),
+  datasetInspectorOnSelection: playground.includes('@click="inspectDatasetFamily(family.id)"'),
+  datasetInspectorFields: playground.includes("Fields available to RD-Agent") && playground.includes("point_in_time_note"),
 };
 const failed = Object.entries(checks).filter((item) => !item[1]).map((item) => item[0]);
 for (const item of Object.entries(checks)) {

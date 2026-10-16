@@ -4006,4 +4006,38 @@ Generated factor code should use only columns present in the HDF file and must n
 forward-fill information before its first observed or announcement date.
 ''')
 print("patched factor_data_template/README.md (P75 dataset documentation)", flush=True)
+
+# ---------------------------------------------------------------- P76 dataset summary + latest-sample inspector
+_P76_DATA_ROUTE_OLD = '''@app.route("/traces", methods=["GET"])
+def list_traces():
+'''
+_P76_DATA_ROUTE_NEW = '''@app.route("/data/preview", methods=["GET"])
+def data_preview():
+    from rdagent.scenarios.qlib.experiment.modern_csi300_data import (
+        dataset_family_preview,
+    )
+
+    family = request.args.get("family", "")
+    force = str(request.args.get("refresh", "")).strip().lower() in {
+        "1", "true", "yes"
+    }
+    try:
+        return jsonify(dataset_family_preview(family, force=force)), 200
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        app.logger.exception("Dataset preview failed for %s", family)
+        return jsonify({"error": f"Dataset preview failed: {exc}"}), 500
+
+
+@app.route("/traces", methods=["GET"])
+def list_traces():
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P76_DATA_ROUTE_OLD,
+    _P76_DATA_ROUTE_NEW,
+    "P76 expose dataset preview endpoint",
+)
+
 print("All rdagent patches applied.", flush=True)
