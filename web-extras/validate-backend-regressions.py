@@ -145,8 +145,9 @@ checks = {
         and '"valid_end": "2023-12-31"' in modern_data
         and '"test_start": "2024-01-01"' in modern_data,
     "rich_factor_hdf":
-        "qlib_fields_for_config" in factor_generate
-        and "RDAGENT_DATASET_FAMILIES" in factor_generate,
+        "RDAGENT_DATASET_QLIB_FIELDS" in factor_generate
+        and "RDAGENT_DATASET_FAMILIES" in factor_generate
+        and "fields = json.loads(" in factor_generate,
     "selected_data_base_features":
         "RDAGENT_DATASET_BASE_FEATURES" in rd_loop,
     "custom_qlib_binary_writer":
