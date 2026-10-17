@@ -401,47 +401,61 @@ assert _denied.calls == 1, f"permission error retried unexpectedly: {_denied.cal
 print("[runtime-regression] optional trade_cal fallback + permission fail-fast: OK")
 
 
-# P78: factor_data_template executes as its own cwd. Verify the LocalEnv-compatible
-# PYTHONPATH makes the injected modern_csi300_data module importable, and verify
-# the patched generator path is explicitly non-cached to prevent cross-provider
-# replay when RDAGENT_QLIB_PROVIDER_URI / dataset families change.
+# P79: factor-data generation must be self-contained. The main process resolves
+# the selected Qlib field list and passes it through the environment so the
+# factor_data_template subprocess never imports deployment-only injected modules.
 import inspect
 from rdagent.scenarios.qlib.experiment import utils as experiment_utils
-from rdagent.utils.env import LocalConf, LocalEnv
 
 _utils_source = inspect.getsource(experiment_utils.generate_data_folder_from_qlib)
-assert "Path(__file__).resolve().parents[4]" in _utils_source
-assert 'env_dict={"PYTHONPATH": _pythonpath}' in _utils_source
 assert "enable_cache=False" in _utils_source
 assert '("daily_pv_all.h5", "daily_pv_debug.h5")' in _utils_source
 assert ".unlink(missing_ok=True)" in _utils_source
 
-with tempfile.TemporaryDirectory() as tmp:
-    probe_dir = Path(tmp)
-    (probe_dir / "probe.py").write_text(
-        "from rdagent.scenarios.qlib.experiment.modern_csi300_data import "
-        "normalize_dataset_config, qlib_fields_for_config\n"
-        "cfg = normalize_dataset_config({'mode':'legacy'})\n"
-        "assert '$close' in qlib_fields_for_config(cfg)\n"
-        "print('P78_IMPORT_OK')\n",
-        encoding="utf-8",
-    )
-    repo_root = str(Path(experiment_utils.__file__).resolve().parents[4])
-    existing_pythonpath = os.environ.get("PYTHONPATH", "")
-    pythonpath = os.pathsep.join(
-        part for part in (repo_root, existing_pythonpath) if part
-    )
-    env = LocalEnv(
-        conf=LocalConf(
-            default_entry="python probe.py",
-            bin_path=os.environ.get("PATH", ""),
-            env_dict={"PYTHONPATH": pythonpath},
-            enable_cache=False,
-            running_timeout_period=60,
-        )
-    )
-    result = env.run(local_path=str(probe_dir))
-    assert result.exit_code == 0, result.full_stdout
-    assert "P78_IMPORT_OK" in result.full_stdout
+_generator_path = (
+    root / "rdagent/scenarios/qlib/experiment/factor_data_template/generate.py"
+)
+_generator_source = _generator_path.read_text(encoding="utf-8")
+assert "RDAGENT_DATASET_QLIB_FIELDS" in _generator_source
+assert "modern_csi300_data import" not in _generator_source
 
-print("[runtime-regression] factor-data LocalEnv package import + fresh-build semantics: OK")
+_saved_env = {
+    key: os.environ.get(key)
+    for key in (
+        "RDAGENT_QLIB_PROVIDER_URI",
+        "RDAGENT_DATASET_FAMILIES",
+        "RDAGENT_DATASET_BASE_FEATURES",
+        "RDAGENT_DATASET_QLIB_FIELDS",
+    )
+}
+try:
+    legacy_cfg = modern_data.normalize_dataset_config({"mode": "legacy"})
+    modern_data.configure_runtime(legacy_cfg)
+    legacy_fields = json.loads(os.environ["RDAGENT_DATASET_QLIB_FIELDS"])
+    assert legacy_fields == [
+        "$open", "$close", "$high", "$low", "$volume", "$factor"
+    ]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        provider = Path(tmp) / "provider"
+        provider.mkdir(parents=True, exist_ok=True)
+        modern_cfg = modern_data.normalize_dataset_config(
+            {
+                "mode": "modern",
+                "families": ["daily_basic"],
+                "provider_uri": str(provider),
+            }
+        )
+        modern_data.configure_runtime(modern_cfg)
+        modern_fields = json.loads(os.environ["RDAGENT_DATASET_QLIB_FIELDS"])
+        assert "$db_pb" in modern_fields
+        assert "$csi300_weight" in modern_fields
+        assert "$close" in modern_fields
+finally:
+    for key, value in _saved_env.items():
+        if value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = value
+
+print("[runtime-regression] factor-data field handoff + fresh-build semantics: OK")

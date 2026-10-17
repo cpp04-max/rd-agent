@@ -156,9 +156,10 @@ checks = {
         "FACTOR_COSTEER_DATA_FOLDER" in modern_data
         and "FACTOR_COSTEER_DATA_FOLDER_DEBUG" in modern_data
         and '"factor_source"' in modern_data,
-    "factor_data_generator_pythonpath":
-        "Path(__file__).resolve().parents[4]" in read("rdagent/scenarios/qlib/experiment/utils.py")
-        and 'env_dict={"PYTHONPATH": _pythonpath}' in read("rdagent/scenarios/qlib/experiment/utils.py"),
+    "factor_data_generator_field_handoff":
+        "RDAGENT_DATASET_QLIB_FIELDS" in modern_data
+        and "RDAGENT_DATASET_QLIB_FIELDS" in factor_generate
+        and "modern_csi300_data import" not in factor_generate,
     "factor_data_generator_cache_disabled":
         "enable_cache=False" in read("rdagent/scenarios/qlib/experiment/utils.py"),
     "factor_data_generator_clears_stale_hdf":

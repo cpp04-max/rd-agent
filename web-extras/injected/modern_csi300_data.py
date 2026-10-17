@@ -2011,6 +2011,9 @@ def configure_runtime(config: dict[str, Any]) -> dict[str, Any]:
         os.environ["RDAGENT_QLIB_PROVIDER_URI"] = resolved["provider_uri"]
         os.environ.pop("RDAGENT_DATASET_FAMILIES", None)
         os.environ.pop("RDAGENT_DATASET_BASE_FEATURES", None)
+        os.environ["RDAGENT_DATASET_QLIB_FIELDS"] = json.dumps(
+            ["$open", "$close", "$high", "$low", "$volume", "$factor"]
+        )
     else:
         provider = resolved.get("provider_uri")
         if not provider:
@@ -2018,6 +2021,9 @@ def configure_runtime(config: dict[str, Any]) -> dict[str, Any]:
         os.environ["RDAGENT_QLIB_PROVIDER_URI"] = str(provider)
         os.environ["RDAGENT_DATASET_FAMILIES"] = json.dumps(resolved["families"])
         os.environ["RDAGENT_DATASET_BASE_FEATURES"] = json.dumps(model_features_for_config(resolved))
+        os.environ["RDAGENT_DATASET_QLIB_FIELDS"] = json.dumps(
+            qlib_fields_for_config(resolved)
+        )
 
     # Factor CoSTEER normally keeps one process-global daily_pv.h5 directory. That
     # is unsafe once experiments can select different providers/families: a later run

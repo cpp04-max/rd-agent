@@ -177,20 +177,12 @@ patch(
     "    else:\n"
     "        from rdagent.utils.env import LocalConf, LocalEnv\n"
     "\n"
-    "        # generate.py imports RD-Agent's dataset module, but LocalEnv executes\n"
-    "        # with factor_data_template as cwd. Add the repository root explicitly.\n"
-    "        _repo_root = str(Path(__file__).resolve().parents[4])\n"
-    "        _existing_pythonpath = os.environ.get(\"PYTHONPATH\", \"\")\n"
-    "        _pythonpath = os.pathsep.join(\n"
-    "            part for part in (_repo_root, _existing_pythonpath) if part\n"
-    "        )\n"
     "        qtde = LocalEnv(\n"
     "            conf=LocalConf(\n"
     "                default_entry=\"python main.py\",\n"
     "                bin_path=os.environ.get(\"PATH\", \"\"),\n"
-    "                env_dict={\"PYTHONPATH\": _pythonpath},\n"
-    "                # Env.run cache keys do not include env_dict. Provider/family are\n"
-    "                # environment-driven, so caching here can replay the wrong dataset.\n"
+    "                # Provider/family/field selection is environment-driven, while\n"
+    "                # Env.run cache keys omit environment variables. Always rebuild.\n"
     "                enable_cache=False,\n"
     "            )\n"
     "        )",
@@ -3951,20 +3943,20 @@ import os
 import qlib
 from qlib.data import D
 
-from rdagent.scenarios.qlib.experiment.modern_csi300_data import (
-    normalize_dataset_config,
-    qlib_fields_for_config,
-)
-
 _provider = os.environ.get("RDAGENT_QLIB_PROVIDER_URI", "~/.qlib/qlib_data/cn_data")
 qlib.init(provider_uri=_provider)
 
 _families = json.loads(os.environ.get("RDAGENT_DATASET_FAMILIES", "[]"))
 _mode = "modern" if _families else "legacy"
-_cfg = normalize_dataset_config({"mode": _mode, "families": _families})
-fields = qlib_fields_for_config(_cfg)
-if _mode == "legacy":
+fields = json.loads(
+    os.environ.get(
+        "RDAGENT_DATASET_QLIB_FIELDS",
+        '["$open","$close","$high","$low","$volume","$factor"]',
+    )
+)
+if not isinstance(fields, list) or not fields:
     fields = ["$open", "$close", "$high", "$low", "$volume", "$factor"]
+fields = [str(field) for field in fields]
 
 instruments = D.instruments(market=os.environ.get("RDAGENT_QLIB_UNIVERSE", "csi300"))
 data = (
