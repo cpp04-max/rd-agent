@@ -168,13 +168,32 @@ patch(
     "    qtde.prepare()",
     "def generate_data_folder_from_qlib():\n"
     "    template_path = Path(__file__).parent / \"factor_data_template\"\n"
+    "    # Never let a failed/new dataset build pass by reusing stale generated HDFs.\n"
+    "    for _generated_name in (\"daily_pv_all.h5\", \"daily_pv_debug.h5\"):\n"
+    "        (template_path / _generated_name).unlink(missing_ok=True)\n"
     "    if os.environ.get(\"RDAGENT_QLIB_DATA_GEN_DOCKER\") == \"1\":\n"
     "        qtde = QTDockerEnv()\n"
     "        qtde.prepare()\n"
     "    else:\n"
     "        from rdagent.utils.env import LocalConf, LocalEnv\n"
     "\n"
-    f"        qtde = LocalEnv(conf={LOCAL_CONF})",
+    "        # generate.py imports RD-Agent's dataset module, but LocalEnv executes\n"
+    "        # with factor_data_template as cwd. Add the repository root explicitly.\n"
+    "        _repo_root = str(Path(__file__).resolve().parents[4])\n"
+    "        _existing_pythonpath = os.environ.get(\"PYTHONPATH\", \"\")\n"
+    "        _pythonpath = os.pathsep.join(\n"
+    "            part for part in (_repo_root, _existing_pythonpath) if part\n"
+    "        )\n"
+    "        qtde = LocalEnv(\n"
+    "            conf=LocalConf(\n"
+    "                default_entry=\"python main.py\",\n"
+    "                bin_path=os.environ.get(\"PATH\", \"\"),\n"
+    "                env_dict={\"PYTHONPATH\": _pythonpath},\n"
+    "                # Env.run cache keys do not include env_dict. Provider/family are\n"
+    "                # environment-driven, so caching here can replay the wrong dataset.\n"
+    "                enable_cache=False,\n"
+    "            )\n"
+    "        )",
     "P4 data folder gen local env",
 )
 

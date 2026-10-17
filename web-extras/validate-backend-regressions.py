@@ -156,6 +156,14 @@ checks = {
         "FACTOR_COSTEER_DATA_FOLDER" in modern_data
         and "FACTOR_COSTEER_DATA_FOLDER_DEBUG" in modern_data
         and '"factor_source"' in modern_data,
+    "factor_data_generator_pythonpath":
+        "Path(__file__).resolve().parents[4]" in read("rdagent/scenarios/qlib/experiment/utils.py")
+        and 'env_dict={"PYTHONPATH": _pythonpath}' in read("rdagent/scenarios/qlib/experiment/utils.py"),
+    "factor_data_generator_cache_disabled":
+        "enable_cache=False" in read("rdagent/scenarios/qlib/experiment/utils.py"),
+    "factor_data_generator_clears_stale_hdf":
+        '("daily_pv_all.h5", "daily_pv_debug.h5")' in read("rdagent/scenarios/qlib/experiment/utils.py")
+        and ".unlink(missing_ok=True)" in read("rdagent/scenarios/qlib/experiment/utils.py"),
     "dataset_preview_endpoint":
         '@app.route("/data/preview"' in server
         and "dataset_family_preview" in server,
