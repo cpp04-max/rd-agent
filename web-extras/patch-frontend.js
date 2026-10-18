@@ -5088,29 +5088,68 @@ pgS81 = pgS81.replace(clickP81Old, clickP81New);
 
 const mountedP81Old = [
   "onMounted(() => {",
+  "  tracePollDisposed = false;",
   "  firstTrace();",
+  "  progressPoll();",
   "});",
-  "",
-  "// 在组件被卸载前移除全局点击事件监听",
-  "onUnmounted(() => {});",
 ].join("\n");
 const mountedP81New = [
   "onMounted(() => {",
+  "  tracePollDisposed = false;",
   "  firstTrace();",
+  "  progressPoll();",
   "  refreshRunStatus();",
-  "});",
-  "",
-  "// 在组件被卸载前移除全局点击事件监听",
-  "onUnmounted(() => {",
-  "  if (runStatusTimer) clearTimeout(runStatusTimer);",
-  "  runStatusTimer = null;",
   "});",
 ].join("\n");
 if (!pgS81.includes(mountedP81Old)) {
-  console.error("[patch-frontend] FAILED: P81 mount/unmount anchor drifted.");
+  console.error("[patch-frontend] FAILED: P81 mount anchor drifted.");
   process.exit(1);
 }
 pgS81 = pgS81.replace(mountedP81Old, mountedP81New);
+
+const unmountedP81Old = [
+  "onUnmounted(() => {",
+  "  tracePollDisposed = true;",
+  "  if (tracePollTimer) {",
+  "    clearTimeout(tracePollTimer);",
+  "    tracePollTimer = undefined;",
+  "  }",
+  "  if (activityTimer) {",
+  "    clearTimeout(activityTimer);",
+  "    activityTimer = undefined;",
+  "  }",
+  "  if (transitionTimer) {",
+  "    clearTimeout(transitionTimer);",
+  "    transitionTimer = undefined;",
+  "  }",
+  "});",
+].join("\n");
+const unmountedP81New = [
+  "onUnmounted(() => {",
+  "  tracePollDisposed = true;",
+  "  if (runStatusTimer) {",
+  "    clearTimeout(runStatusTimer);",
+  "    runStatusTimer = null;",
+  "  }",
+  "  if (tracePollTimer) {",
+  "    clearTimeout(tracePollTimer);",
+  "    tracePollTimer = undefined;",
+  "  }",
+  "  if (activityTimer) {",
+  "    clearTimeout(activityTimer);",
+  "    activityTimer = undefined;",
+  "  }",
+  "  if (transitionTimer) {",
+  "    clearTimeout(transitionTimer);",
+  "    transitionTimer = undefined;",
+  "  }",
+  "});",
+].join("\n");
+if (!pgS81.includes(unmountedP81Old)) {
+  console.error("[patch-frontend] FAILED: P81 unmount anchor drifted.");
+  process.exit(1);
+}
+pgS81 = pgS81.replace(unmountedP81Old, unmountedP81New);
 fs.writeFileSync(pgPathP81, pgS81);
 
 const loopPathP81 = "/src/web/src/components/loop-component.vue";
