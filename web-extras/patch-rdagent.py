@@ -4730,9 +4730,11 @@ patch(
     "P82 derive effective historical terminal state",
 )
 
-_P82_RUN_STATUS_OLD = '''            "terminal_status": _read_terminal_status(trace_dir),
+_P82_RUN_STATUS_OLD = '''            "historical": bool(trace_dir.exists() and trace_dir.is_dir() and not alive),
+            "terminal_status": _read_terminal_status(trace_dir),
 '''
-_P82_RUN_STATUS_NEW = '''            "terminal_status": _effective_terminal_status(trace_dir, task=task),
+_P82_RUN_STATUS_NEW = '''            "historical": bool(trace_dir.exists() and trace_dir.is_dir() and not alive),
+            "terminal_status": _effective_terminal_status(trace_dir, task=task),
 '''
 patch(
     "rdagent/log/server/app.py",
