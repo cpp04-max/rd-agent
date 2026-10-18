@@ -4615,14 +4615,10 @@ patch(
 )
 
 _P81_RESULT_DIAG_OLD = '''            "inherited_loop_count": len(parent_loops),
-            "terminal_status": _read_terminal_status(trace_dir),
-            "terminal": terminal,
 '''
 _P81_RESULT_DIAG_NEW = '''            "inherited_loop_count": len(parent_loops),
             "direct_message_count": len(disk_messages),
             "inherited_message_count": len(parent_messages),
-            "terminal_status": _read_terminal_status(trace_dir),
-            "terminal": terminal,
 '''
 patch(
     "rdagent/log/server/app.py",
