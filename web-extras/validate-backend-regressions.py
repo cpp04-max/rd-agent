@@ -352,7 +352,10 @@ p80_checks = {
         "Factor implementation execution" in server
         and "Generated factor execution exceeded its LocalEnv timeout" in server,
     "live_terminal_status":
-        '"terminal_status": _read_terminal_status(trace_dir)' in server,
+        (
+            '"terminal_status": _read_terminal_status(trace_dir)' in server
+            or '"terminal_status": _effective_terminal_status(trace_dir, task=task)' in server
+        ),
 }
 for name, ok in p80_checks.items():
     print("[backend-regression] " + name + ": " + ("OK" if ok else "FAIL"))
@@ -385,5 +388,23 @@ for name, ok in p81_checks.items():
 _failed_p81 = [name for name, ok in p81_checks.items() if not ok]
 if _failed_p81:
     raise SystemExit("P81 backend regression checks failed: " + ", ".join(_failed_p81))
+
+p82_checks = {
+    "effective_terminal_status":
+        "def _effective_terminal_status(" in server
+        and "stale_stop_marker" in server,
+    "result_json_safe":
+        "def _result_json_safe(" in server
+        and "return jsonify(_result_json_safe(_payload)), 200" in server,
+    "result_diagnostic_endpoint":
+        '@app.route("/result/diagnostic", methods=["GET"])' in server,
+    "nonfatal_result_ancestry":
+        "RESULT ancestry reconstruction failed" in server,
+}
+for name, ok in p82_checks.items():
+    print("[backend-regression] " + name + ": " + ("OK" if ok else "FAIL"))
+_failed_p82 = [name for name, ok in p82_checks.items() if not ok]
+if _failed_p82:
+    raise SystemExit("P82 backend regression checks failed: " + ", ".join(_failed_p82))
 
 print("[backend-regression] all checks passed")
