@@ -4839,6 +4839,18 @@ if (!pgS80.includes(resultTabP80Old)) {
   process.exit(1);
 }
 pgS80 = pgS80.replace(resultTabP80Old, resultTabP80New);
+
+// P48 added a second loading-state RESULT tab. Once the canonical RESULT tab is
+// always visible, suppress that placeholder so the UI never renders two RESULT tabs.
+const loadingTabP80Old =
+  '<div class="tab-item-btn" v-if="resultData.length == 0 && !updateEnd && !stopFlag" @click="tabIndex = 1" :class="{ active: tabIndex == 1 }">';
+const loadingTabP80New =
+  '<div class="tab-item-btn" v-if="false" @click="tabIndex = 1" :class="{ active: tabIndex == 1 }">';
+if (!pgS80.includes(loadingTabP80Old)) {
+  console.error("[patch-frontend] FAILED: P80 loading RESULT tab anchor drifted.");
+  process.exit(1);
+}
+pgS80 = pgS80.replace(loadingTabP80Old, loadingTabP80New);
 fs.writeFileSync(pgPathP80, pgS80);
 
 const resultPathP80 = "/src/web/src/views/ResultPage.vue";

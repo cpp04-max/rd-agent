@@ -32,6 +32,7 @@ const checks = {
   datasetInspectorOnSelection: playground.includes('@click="inspectDatasetFamily(family.id)"'),
   datasetInspectorFields: playground.includes("Fields available to RD-Agent") && playground.includes("point_in_time_note"),
   resultTabAlwaysReachable: playgroundPage.includes('v-if="Boolean(props.id)"'),
+  noDuplicateLoadingResultTab: playgroundPage.includes('v-if="false" @click="tabIndex = 1"'),
   stoppedResultCard: result.includes("liveResultTerminalStatus") && result.includes("Previously completed loop results remain available below."),
 };
 const failed = Object.entries(checks).filter((item) => !item[1]).map((item) => item[0]);
