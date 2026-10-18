@@ -4530,9 +4530,7 @@ patch(
 
 # /result/live must work even if /trace has not yet lazily populated an in-memory
 # historical task. Recover direct RESULT messages through read_trace as a second path.
-_P81_RESULT_DIRECT_OLD = '''    # Append current in-memory messages after durable messages so the newest live
-    # payload wins when both sources contain the same loop/event.
-    # A continuation/branch must show its already-completed source loops immediately.
+_P81_RESULT_DIRECT_OLD = '''    parent_messages, continuation_source = _resume_parent_result_messages(trace_dir)
 '''
 _P81_RESULT_DIRECT_NEW = '''    if not disk_messages and not alive:
         try:
@@ -4559,9 +4557,7 @@ _P81_RESULT_DIRECT_NEW = '''    if not disk_messages and not alive:
                 trace_dir,
             )
 
-    # Append current in-memory messages after durable messages so the newest live
-    # payload wins when both sources contain the same loop/event.
-    # A continuation/branch must show its already-completed source loops immediately.
+    parent_messages, continuation_source = _resume_parent_result_messages(trace_dir)
 '''
 patch(
     "rdagent/log/server/app.py",
