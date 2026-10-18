@@ -336,4 +336,28 @@ if _name_a == _name_b or "-src" not in _name_a:
     raise SystemExit("compacted continuation trace names lost uniqueness/source hash")
 print("[backend-regression] bounded continuation trace naming: OK")
 
+
+factor_config = read("rdagent/components/coder/factor_coder/config.py")
+p80_checks = {
+    "factor_exec_timeout_configurable":
+        "RDAGENT_FACTOR_EXEC_TIMEOUT_SECONDS" in factor_config
+        and '"5400"' in factor_config
+        and "running_timeout_period=_factor_timeout" in factor_config,
+    "stop_descendant_hardening":
+        "_descendant_pids" in server
+        and "_last_stop_report" in server
+        and "_stop_requested.json" in server
+        and "remaining_group" in server,
+    "factor_timeout_result_card":
+        "Factor implementation execution" in server
+        and "Generated factor execution exceeded its LocalEnv timeout" in server,
+    "live_terminal_status":
+        '"terminal_status": _read_terminal_status(trace_dir)' in server,
+}
+for name, ok in p80_checks.items():
+    print("[backend-regression] " + name + ": " + ("OK" if ok else "FAIL"))
+_failed_p80 = [name for name, ok in p80_checks.items() if not ok]
+if _failed_p80:
+    raise SystemExit("P80 backend regression checks failed: " + ", ".join(_failed_p80))
+
 print("[backend-regression] all checks passed")

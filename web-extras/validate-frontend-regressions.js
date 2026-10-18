@@ -31,6 +31,8 @@ const checks = {
   datasetInspectorUi: playground.includes("dataset-preview-card") && playground.includes("Latest sample") && playground.includes("Refresh sample"),
   datasetInspectorOnSelection: playground.includes('@click="inspectDatasetFamily(family.id)"'),
   datasetInspectorFields: playground.includes("Fields available to RD-Agent") && playground.includes("point_in_time_note"),
+  resultTabAlwaysReachable: playgroundPage.includes('v-if="Boolean(props.id)"'),
+  stoppedResultCard: result.includes("liveResultTerminalStatus") && result.includes("Previously completed loop results remain available below."),
 };
 const failed = Object.entries(checks).filter((item) => !item[1]).map((item) => item[0]);
 for (const item of Object.entries(checks)) {

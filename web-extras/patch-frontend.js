@@ -4824,3 +4824,123 @@ pgS76 = pgS76.slice(0, stylePosP76) + styleP76 + pgS76.slice(stylePosP76);
 
 fs.writeFileSync(pgPathP76, pgS76);
 console.log("[patch-frontend] P76 dataset inspector applied");
+
+
+// ------------------------- P80: RESULT is always reachable + stopped-state card -------------------------
+// A continuation can have no current-trace metric rows while its inherited RESULT is
+// available only through /result/live. Do not hide ResultPage behind resultData/END;
+// mounting the tab is what allows the live endpoint to restore inherited/failure rows.
+const pgPathP80 = "/src/web/src/views/PlaygroundPage.vue";
+let pgS80 = fs.readFileSync(pgPathP80, "utf8");
+const resultTabP80Old = 'v-if="resultData.length != 0 || updateEnd"';
+const resultTabP80New = 'v-if="Boolean(props.id)"';
+if (!pgS80.includes(resultTabP80Old)) {
+  console.error("[patch-frontend] FAILED: P80 RESULT tab visibility anchor drifted.");
+  process.exit(1);
+}
+pgS80 = pgS80.replace(resultTabP80Old, resultTabP80New);
+fs.writeFileSync(pgPathP80, pgS80);
+
+const resultPathP80 = "/src/web/src/views/ResultPage.vue";
+let resultS80 = fs.readFileSync(resultPathP80, "utf8");
+
+const stateP80Old =
+  'const liveResultFailure = ref(null);\\n' +
+  'const liveResultTerminal = ref(false);';
+const stateP80New =
+  'const liveResultFailure = ref(null);\\n' +
+  'const liveResultTerminalStatus = ref(null);\\n' +
+  'const liveResultTerminal = ref(false);';
+if (!resultS80.includes(stateP80Old)) {
+  console.error("[patch-frontend] FAILED: P80 terminal-status state anchor drifted.");
+  process.exit(1);
+}
+resultS80 = resultS80.replace(stateP80Old, stateP80New);
+
+const pollP80Old =
+  '    liveResultFailure.value = snapshot?.execution_failure || null;\\n' +
+  '    liveResultTerminal.value = Boolean(snapshot?.terminal);';
+const pollP80New =
+  '    liveResultFailure.value = snapshot?.execution_failure || null;\\n' +
+  '    liveResultTerminalStatus.value = snapshot?.terminal_status || null;\\n' +
+  '    liveResultTerminal.value = Boolean(snapshot?.terminal);';
+if (!resultS80.includes(pollP80Old)) {
+  console.error("[patch-frontend] FAILED: P80 terminal-status poll anchor drifted.");
+  process.exit(1);
+}
+resultS80 = resultS80.replace(pollP80Old, pollP80New);
+
+const resetP80Old =
+  '    liveResultFailure.value = null;\\n' +
+  '    liveResultTerminal.value = false;';
+const resetP80New =
+  '    liveResultFailure.value = null;\\n' +
+  '    liveResultTerminalStatus.value = null;\\n' +
+  '    liveResultTerminal.value = false;';
+if (!resultS80.includes(resetP80Old)) {
+  console.error("[patch-frontend] FAILED: P80 terminal-status reset anchor drifted.");
+  process.exit(1);
+}
+resultS80 = resultS80.replace(resetP80Old, resetP80New);
+
+const emptyP80Old =
+  'v-if="tableData.length === 0 && Object.keys(metricData || {}).length === 0 && !liveResultFailure"';
+const emptyP80New =
+  'v-if="tableData.length === 0 && Object.keys(metricData || {}).length === 0 && !liveResultFailure && !liveResultTerminalStatus"';
+if (!resultS80.includes(emptyP80Old)) {
+  console.error("[patch-frontend] FAILED: P80 RESULT empty-state anchor drifted.");
+  process.exit(1);
+}
+resultS80 = resultS80.replace(emptyP80Old, emptyP80New);
+
+const failureCardP80Anchor =
+  '        <div v-if="liveResultFailure" class="execution-failure-summary">';
+const stoppedCardP80 = [
+  '        <div',
+  '          v-if="liveResultTerminalStatus?.status === "stopped""',
+  '          class="stopped-result-summary"',
+  '        >',
+  '          <div class="stopped-result-summary-head">',
+  '            <strong>Stopped by user</strong>',
+  '            <span>{{ liveResultTerminalStatus.timestamp || "" }}</span>',
+  '          </div>',
+  '          <p>{{ liveResultTerminalStatus.reason || "The experiment was stopped." }}</p>',
+  '          <p>Previously completed loop results remain available below.</p>',
+  '        </div>',
+  failureCardP80Anchor,
+].join("\\n");
+if (!resultS80.includes(failureCardP80Anchor)) {
+  console.error("[patch-frontend] FAILED: P80 stopped RESULT card anchor drifted.");
+  process.exit(1);
+}
+resultS80 = resultS80.replace(failureCardP80Anchor, stoppedCardP80);
+
+const styleEndP80 = "</style>";
+const styleP80 = [
+  "",
+  ".stopped-result-summary {",
+  "  margin: 0 0 1.1em;",
+  "  padding: 1em 1.1em;",
+  "  border: 1px solid #d8dee9;",
+  "  border-radius: 12px;",
+  "  background: #f8fafc;",
+  "  color: #4b5565;",
+  "}",
+  ".stopped-result-summary-head { display:flex; align-items:baseline; gap:.7em; flex-wrap:wrap; margin-bottom:.45em; }",
+  ".stopped-result-summary-head strong { color:#4f5d73; font-size:1.05em; }",
+  ".stopped-result-summary-head span { color:#8a93a2; font-size:.8em; }",
+  ".stopped-result-summary p { margin:.35em 0; line-height:1.5; }",
+  "",
+].join("\\n");
+const stylePosP80 = resultS80.lastIndexOf(styleEndP80);
+if (stylePosP80 < 0) {
+  console.error("[patch-frontend] FAILED: P80 ResultPage style end missing.");
+  process.exit(1);
+}
+resultS80 =
+  resultS80.slice(0, stylePosP80) +
+  styleP80 +
+  resultS80.slice(stylePosP80);
+
+fs.writeFileSync(resultPathP80, resultS80);
+console.log("[patch-frontend] P80 always-visible RESULT + stopped-state card applied");

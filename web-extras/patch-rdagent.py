@@ -4051,4 +4051,339 @@ patch(
     "P76 expose dataset preview endpoint",
 )
 
+
+# ---------------------------------------------------------------- P80 stop-tree hardening + factor timeout RESULT recovery
+# A long generated factor can run in a nested LocalEnv shell for more than an hour.
+# Keep the executor timeout configurable (and consistent with the 90-minute factor-loop
+# budget guard), make Stop kill escaped descendants as well as the worker process group,
+# and surface this exact timeout as a terminal RESULT instead of a blank page.
+
+_P80_FACTOR_TIMEOUT_OLD = '''        env = LocalEnv(conf=LocalConf(default_entry="python main.py", bin_path=os.environ.get("PATH", "")))
+'''
+_P80_FACTOR_TIMEOUT_NEW = '''        _factor_timeout_raw = os.environ.get(
+            "RDAGENT_FACTOR_EXEC_TIMEOUT_SECONDS",
+            "5400",
+        ).strip()
+        _factor_timeout = (
+            None
+            if _factor_timeout_raw.lower() in {"", "0", "none"}
+            else max(60, int(_factor_timeout_raw))
+        )
+        env = LocalEnv(
+            conf=LocalConf(
+                default_entry="python main.py",
+                bin_path=os.environ.get("PATH", ""),
+                running_timeout_period=_factor_timeout,
+            )
+        )
+'''
+patch(
+    "rdagent/components/coder/factor_coder/config.py",
+    _P80_FACTOR_TIMEOUT_OLD,
+    _P80_FACTOR_TIMEOUT_NEW,
+    "P80 configurable 90-minute factor execution timeout",
+)
+
+_P80_STOP_NEW = '''    def stop(self) -> None:
+        # Keep a report so /control can verify that not only the multiprocessing
+        # worker, but also LocalEnv/qrun/factor descendants, are gone.
+        self._last_stop_report = {
+            "worker_pid": None,
+            "process_group": None,
+            "descendant_pids": [],
+            "escalated": False,
+            "remaining_pids": [],
+            "remaining_group": False,
+        }
+        if self.process is None or not self.process.pid:
+            return
+
+        import os as _os
+        import signal as _signal
+
+        _pid = int(self.process.pid)
+        self._last_stop_report["worker_pid"] = _pid
+
+        def _pid_alive(_candidate: int) -> bool:
+            try:
+                with open(f"/proc/{_candidate}/status", "r", encoding="utf-8") as _fh:
+                    _status = _fh.read()
+                for _line in _status.splitlines():
+                    if _line.startswith("State:"):
+                        # Zombies are already dead for our purposes and only await reap.
+                        if "\\tZ" in _line or " Z " in _line:
+                            return False
+                        break
+                _os.kill(_candidate, 0)
+                return True
+            except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+                return False
+
+        def _descendant_pids(_root_pid: int) -> list[int]:
+            _children: dict[int, list[int]] = {}
+            try:
+                _proc_names = _os.listdir("/proc")
+            except OSError:
+                return []
+            for _name in _proc_names:
+                if not _name.isdigit():
+                    continue
+                _child = int(_name)
+                try:
+                    with open(
+                        f"/proc/{_child}/status",
+                        "r",
+                        encoding="utf-8",
+                    ) as _fh:
+                        _ppid = None
+                        for _line in _fh:
+                            if _line.startswith("PPid:"):
+                                _ppid = int(_line.split(":", 1)[1].strip())
+                                break
+                    if _ppid is not None:
+                        _children.setdefault(_ppid, []).append(_child)
+                except (FileNotFoundError, ProcessLookupError, PermissionError, OSError, ValueError):
+                    continue
+
+            _found: list[int] = []
+            _stack = list(_children.get(_root_pid, []))
+            _seen: set[int] = set()
+            while _stack:
+                _child = _stack.pop()
+                if _child in _seen or _child == _os.getpid():
+                    continue
+                _seen.add(_child)
+                _found.append(_child)
+                _stack.extend(_children.get(_child, []))
+            return _found
+
+        _captured = _descendant_pids(_pid)
+        self._last_stop_report["descendant_pids"] = list(_captured)
+
+        _pgid = None
+        _group_owned = False
+        if hasattr(_os, "killpg"):
+            try:
+                if self.process.is_alive() and hasattr(_os, "getpgid"):
+                    _candidate_pgid = _os.getpgid(_pid)
+                    if _candidate_pgid == _pid:
+                        _pgid = _candidate_pgid
+                        _group_owned = True
+                else:
+                    # setsid() makes the worker PID the process-group ID. The leader
+                    # may have exited while a LocalEnv child is still alive.
+                    _os.killpg(_pid, 0)
+                    _pgid = _pid
+                    _group_owned = True
+            except (OSError, ProcessLookupError, PermissionError):
+                _pgid = None
+                _group_owned = False
+
+        self._last_stop_report["process_group"] = _pgid
+
+        if _group_owned and _pgid is not None:
+            try:
+                _os.killpg(_pgid, _signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                pass
+        elif self.process.is_alive():
+            self.process.terminate()
+
+        # Belt-and-suspenders: explicitly signal descendants captured from /proc.
+        # This also catches a helper that created its own process group/session.
+        for _child in reversed(_captured):
+            if _pid_alive(_child):
+                try:
+                    _os.kill(_child, _signal.SIGTERM)
+                except (ProcessLookupError, PermissionError):
+                    pass
+
+        self.process.join(timeout=5)
+
+        # Capture descendants that appeared during the TERM grace period while the
+        # worker still exists, and escalate any surviving process/tree to SIGKILL.
+        _captured = list(dict.fromkeys(_captured + _descendant_pids(_pid)))
+        _remaining = [_child for _child in _captured if _pid_alive(_child)]
+        _group_alive = False
+        if _group_owned and _pgid is not None:
+            try:
+                _os.killpg(_pgid, 0)
+                _group_alive = True
+            except (ProcessLookupError, PermissionError, OSError):
+                _group_alive = False
+
+        if self.process.is_alive() or _remaining or _group_alive:
+            self._last_stop_report["escalated"] = True
+            if _group_owned and _pgid is not None:
+                try:
+                    _os.killpg(_pgid, _signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+            for _child in reversed(_remaining):
+                if _pid_alive(_child):
+                    try:
+                        _os.kill(_child, _signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        pass
+            if self.process.is_alive():
+                try:
+                    self.process.kill()
+                except AttributeError:
+                    self.process.terminate()
+            self.process.join(timeout=5)
+
+        _remaining = [_child for _child in _captured if _pid_alive(_child)]
+        _group_alive = False
+        if _group_owned and _pgid is not None:
+            try:
+                _os.killpg(_pgid, 0)
+                _group_alive = True
+            except (ProcessLookupError, PermissionError, OSError):
+                _group_alive = False
+
+        self._last_stop_report["descendant_pids"] = list(_captured)
+        self._last_stop_report["remaining_pids"] = list(_remaining)
+        self._last_stop_report["remaining_group"] = bool(_group_alive)
+
+        # Best-effort cleanup for IPC queues.
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P74_STOP_NEW,
+    _P80_STOP_NEW,
+    "P80 stop worker group plus escaped LocalEnv descendants",
+)
+
+_P80_CONTROL_STOP_NEW = '''    try:
+        import json as _json
+
+        _trace_dir = Path(id)
+        _stop_request = {
+            "status": "stop_requested",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        try:
+            (_trace_dir / "_stop_requested.json").write_text(
+                _json.dumps(_stop_request, indent=2),
+                encoding="utf-8",
+            )
+        except OSError:
+            app.logger.exception("Could not persist stop request for %s", id)
+
+        # Always invoke stop(), even if the worker parent already exited: an owned
+        # process group may still contain a LocalEnv/qrun child.
+        task.stop()
+        _stop_report = getattr(task, "_last_stop_report", {}) or {}
+        _remaining = list(_stop_report.get("remaining_pids") or [])
+        _remaining_group = bool(_stop_report.get("remaining_group"))
+
+        if task.is_alive() or _remaining or _remaining_group:
+            app.logger.error(
+                "Stop incomplete for %s: %s",
+                id,
+                _stop_report,
+            )
+            return jsonify(
+                {
+                    "error": "RD-Agent process tree is still alive after stop attempt",
+                    "stop_report": _stop_report,
+                }
+            ), 500
+
+        _terminal = _write_terminal_status(
+            _trace_dir,
+            status="stopped",
+            reason="RD-Agent process was stopped by user.",
+            end_code=-1,
+        )
+
+        if not task.messages or task.messages[-1].get("tag") != "END":
+            task.messages.append(
+                {
+                    "tag": "END",
+                    "timestamp": _terminal["timestamp"],
+                    "content": {
+                        "error_msg": _terminal["reason"],
+                        "end_code": _terminal["end_code"],
+                    },
+                }
+            )
+        app.logger.warning(
+            "Process tree for %s has been stopped. report=%s",
+            id,
+            _stop_report,
+        )
+        return jsonify(
+            {
+                "status": "stopped",
+                "id": data["id"],
+                "terminal": _terminal,
+                "stop_report": _stop_report,
+            }
+        ), 200
+    except Exception as e:
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P74_CONTROL_STOP_NEW,
+    _P80_CONTROL_STOP_NEW,
+    "P80 verify descendant termination and persist stop request",
+)
+
+_P80_FAILURE_STAGE_OLD = '''    if (
+        "filenotfounderror" in _lower
+'''
+_P80_FAILURE_STAGE_NEW = '''    _stage = "Qlib backtest / running"
+    if (
+        "filenotfounderror" in _lower
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P80_FAILURE_STAGE_OLD,
+    _P80_FAILURE_STAGE_NEW,
+    "P80 initialize execution-failure stage",
+)
+
+_P80_FACTOR_TIMEOUT_REASON_OLD = '''    elif "qrun_exit_code=124" in _lower or "qrun timed out" in _lower:
+        _reason = "The Qlib backtest timed out before producing a complete result."
+'''
+_P80_FACTOR_TIMEOUT_REASON_NEW = '''    elif "execution timeout error and the timeout is set to " in _lower:
+        _stage = "Factor implementation execution"
+        _reason = (
+            "Generated factor execution exceeded its LocalEnv timeout before "
+            "result.h5 was produced. The factor was not evaluated, so this is "
+            "an execution/resource failure rather than a negative research result."
+        )
+    elif "qrun_exit_code=124" in _lower or "qrun timed out" in _lower:
+        _reason = "The Qlib backtest timed out before producing a complete result."
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P80_FACTOR_TIMEOUT_REASON_OLD,
+    _P80_FACTOR_TIMEOUT_REASON_NEW,
+    "P80 identify generated-factor execution timeout in RESULT",
+)
+
+patch(
+    "rdagent/log/server/app.py",
+    '        "stage": "Qlib backtest / running",',
+    '        "stage": _stage,',
+    "P80 return precise execution-failure stage",
+)
+
+_P80_RESULT_TERMINAL_OLD = '''            "execution_failure": execution_failure,
+            "terminal": terminal,
+'''
+_P80_RESULT_TERMINAL_NEW = '''            "execution_failure": execution_failure,
+            "terminal_status": _read_terminal_status(trace_dir),
+            "terminal": terminal,
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P80_RESULT_TERMINAL_OLD,
+    _P80_RESULT_TERMINAL_NEW,
+    "P80 expose durable stopped state in live RESULT",
+)
+
+
 print("All rdagent patches applied.", flush=True)
