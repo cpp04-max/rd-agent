@@ -4845,11 +4845,11 @@ const resultPathP80 = "/src/web/src/views/ResultPage.vue";
 let resultS80 = fs.readFileSync(resultPathP80, "utf8");
 
 const stateP80Old =
-  'const liveResultFailure = ref(null);\\n' +
+  'const liveResultFailure = ref(null);\n' +
   'const liveResultTerminal = ref(false);';
 const stateP80New =
-  'const liveResultFailure = ref(null);\\n' +
-  'const liveResultTerminalStatus = ref(null);\\n' +
+  'const liveResultFailure = ref(null);\n' +
+  'const liveResultTerminalStatus = ref(null);\n' +
   'const liveResultTerminal = ref(false);';
 if (!resultS80.includes(stateP80Old)) {
   console.error("[patch-frontend] FAILED: P80 terminal-status state anchor drifted.");
@@ -4858,11 +4858,11 @@ if (!resultS80.includes(stateP80Old)) {
 resultS80 = resultS80.replace(stateP80Old, stateP80New);
 
 const pollP80Old =
-  '    liveResultFailure.value = snapshot?.execution_failure || null;\\n' +
+  '    liveResultFailure.value = snapshot?.execution_failure || null;\n' +
   '    liveResultTerminal.value = Boolean(snapshot?.terminal);';
 const pollP80New =
-  '    liveResultFailure.value = snapshot?.execution_failure || null;\\n' +
-  '    liveResultTerminalStatus.value = snapshot?.terminal_status || null;\\n' +
+  '    liveResultFailure.value = snapshot?.execution_failure || null;\n' +
+  '    liveResultTerminalStatus.value = snapshot?.terminal_status || null;\n' +
   '    liveResultTerminal.value = Boolean(snapshot?.terminal);';
 if (!resultS80.includes(pollP80Old)) {
   console.error("[patch-frontend] FAILED: P80 terminal-status poll anchor drifted.");
@@ -4871,11 +4871,11 @@ if (!resultS80.includes(pollP80Old)) {
 resultS80 = resultS80.replace(pollP80Old, pollP80New);
 
 const resetP80Old =
-  '    liveResultFailure.value = null;\\n' +
+  '    liveResultFailure.value = null;\n' +
   '    liveResultTerminal.value = false;';
 const resetP80New =
-  '    liveResultFailure.value = null;\\n' +
-  '    liveResultTerminalStatus.value = null;\\n' +
+  '    liveResultFailure.value = null;\n' +
+  '    liveResultTerminalStatus.value = null;\n' +
   '    liveResultTerminal.value = false;';
 if (!resultS80.includes(resetP80Old)) {
   console.error("[patch-frontend] FAILED: P80 terminal-status reset anchor drifted.");
@@ -4897,7 +4897,7 @@ const failureCardP80Anchor =
   '        <div v-if="liveResultFailure" class="execution-failure-summary">';
 const stoppedCardP80 = [
   '        <div',
-  '          v-if="liveResultTerminalStatus?.status === "stopped""',
+  "          v-if=\"liveResultTerminalStatus?.status === 'stopped'\"",
   '          class="stopped-result-summary"',
   '        >',
   '          <div class="stopped-result-summary-head">',
@@ -4908,7 +4908,7 @@ const stoppedCardP80 = [
   '          <p>Previously completed loop results remain available below.</p>',
   '        </div>',
   failureCardP80Anchor,
-].join("\\n");
+].join("\n");
 if (!resultS80.includes(failureCardP80Anchor)) {
   console.error("[patch-frontend] FAILED: P80 stopped RESULT card anchor drifted.");
   process.exit(1);
@@ -4931,7 +4931,7 @@ const styleP80 = [
   ".stopped-result-summary-head span { color:#8a93a2; font-size:.8em; }",
   ".stopped-result-summary p { margin:.35em 0; line-height:1.5; }",
   "",
-].join("\\n");
+].join("\n");
 const stylePosP80 = resultS80.lastIndexOf(styleEndP80);
 if (stylePosP80 < 0) {
   console.error("[patch-frontend] FAILED: P80 ResultPage style end missing.");
