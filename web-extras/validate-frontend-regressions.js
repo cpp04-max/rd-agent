@@ -7,6 +7,7 @@ const playground = read("/src/web/src/views/Playground.vue");
 const playgroundPage = read("/src/web/src/views/PlaygroundPage.vue");
 const result = read("/src/web/src/views/ResultPage.vue");
 const api = read("/src/web/src/utils/api.js");
+const loop = read("/src/web/src/components/loop-component.vue");
 const checks = {
   keyedPlaygroundPage: playground.includes(':key="id"'),
   reactiveContinuationRoute: playground.includes("route.query.trace") && playground.includes("applyDeepTrace"),
@@ -34,6 +35,9 @@ const checks = {
   resultTabAlwaysReachable: playgroundPage.includes('v-if="Boolean(props.id)"'),
   noDuplicateLoadingResultTab: playgroundPage.includes('v-if="false" @click="tabIndex = 1"'),
   stoppedResultCard: result.includes("liveResultTerminalStatus") && result.includes("Previously completed loop results remain available below."),
+  runStatusApi: api.includes("getRunStatus") && api.includes("run/status?"),
+  stopUsesBackendLiveness: playgroundPage.includes(':canStop="runAlive"') && playgroundPage.includes("refreshRunStatus") && loop.includes("!canStop"),
+  terminalHistoricalResultMessage: result.includes("completed historical trace") && result.includes("no persisted structured RESULT rows could be reconstructed"),
 };
 const failed = Object.entries(checks).filter((item) => !item[1]).map((item) => item[0]);
 for (const item of Object.entries(checks)) {

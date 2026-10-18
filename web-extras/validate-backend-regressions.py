@@ -360,4 +360,30 @@ _failed_p80 = [name for name, ok in p80_checks.items() if not ok]
 if _failed_p80:
     raise SystemExit("P80 backend regression checks failed: " + ", ".join(_failed_p80))
 
+
+p81_checks = {
+    "historical_raw_timestamp_terminal":
+        "last_storage_timestamp = None" in server
+        and "if last_timestamp is None and last_storage_timestamp is not None" in server,
+    "run_status_endpoint":
+        '@app.route("/run/status", methods=["GET"])' in server
+        and '"process_registered": process_registered' in server,
+    "historical_stop_idempotent":
+        '"status": "not_running"' in server
+        and "This is a historical trace; there is no process to stop." in server,
+    "historical_result_fallback":
+        "Historical RESULT fallback replay failed" in server,
+    "retrofit_inherited_snapshot":
+        '"retrofit": True' in server
+        and "Retrofitted frozen RESULT inheritance" in server,
+    "result_replay_diagnostics":
+        '"direct_message_count": len(disk_messages)' in server
+        and '"inherited_message_count": len(parent_messages)' in server,
+}
+for name, ok in p81_checks.items():
+    print("[backend-regression] " + name + ": " + ("OK" if ok else "FAIL"))
+_failed_p81 = [name for name, ok in p81_checks.items() if not ok]
+if _failed_p81:
+    raise SystemExit("P81 backend regression checks failed: " + ", ".join(_failed_p81))
+
 print("[backend-regression] all checks passed")

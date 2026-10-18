@@ -4956,3 +4956,234 @@ resultS80 =
 
 fs.writeFileSync(resultPathP80, resultS80);
 console.log("[patch-frontend] P80 always-visible RESULT + stopped-state card applied");
+
+
+// ------------------------- P81: historical traces are not stoppable -------------------------
+// The left rail previously inferred Stop availability from updateEnd. Historical
+// replay can have zero UI-convertible rows, so that heuristic can leave Stop enabled
+// even though the server has no child process. Use the backend's authoritative state.
+
+const apiPathP81 = "/src/web/src/utils/api.js";
+let apiS81 = fs.readFileSync(apiPathP81, "utf8");
+const statusApiAnchorP81 = "export async function control(data) {";
+const statusApiInsertP81 = [
+  "export async function getRunStatus(traceId) {",
+  "    const query = new URLSearchParams({ id: traceId });",
+  "    const response = await request({",
+  "        url: url + \"run/status?\" + query.toString(),",
+  "        method: \"get\"",
+  "    });",
+  "    if (response && typeof response === \"object\" && Number(response.status) >= 400) {",
+  "        const payload = response.data && typeof response.data === \"object\" ? response.data : {};",
+  "        throw new Error(payload.error || (\"Run status request failed with HTTP \" + response.status + \".\"));",
+  "    }",
+  "    if (response && response.data && typeof response.data === \"object\" && \"alive\" in response.data) {",
+  "        return response.data;",
+  "    }",
+  "    return response;",
+  "}",
+  "",
+  statusApiAnchorP81,
+].join("\n");
+if (!apiS81.includes(statusApiAnchorP81)) {
+  console.error("[patch-frontend] FAILED: P81 run-status API anchor drifted.");
+  process.exit(1);
+}
+apiS81 = apiS81.replace(statusApiAnchorP81, statusApiInsertP81);
+fs.writeFileSync(apiPathP81, apiS81);
+
+const pgPathP81 = "/src/web/src/views/PlaygroundPage.vue";
+let pgS81 = fs.readFileSync(pgPathP81, "utf8");
+
+const importP81Old =
+  'import { trace, control, url, submitUserInteraction } from "../utils/api";';
+const importP81New =
+  'import { trace, control, url, submitUserInteraction, getRunStatus } from "../utils/api";';
+if (!pgS81.includes(importP81Old)) {
+  console.error("[patch-frontend] FAILED: P81 PlaygroundPage API import anchor drifted.");
+  process.exit(1);
+}
+pgS81 = pgS81.replace(importP81Old, importP81New);
+
+const loopPropsP81Old =
+  '        :updateEnd="updateEnd"\n' +
+  '        :traceName="traceName"';
+const loopPropsP81New =
+  '        :updateEnd="updateEnd"\n' +
+  '        :canStop="runAlive"\n' +
+  '        :traceName="traceName"';
+if (!pgS81.includes(loopPropsP81Old)) {
+  console.error("[patch-frontend] FAILED: P81 loop canStop prop anchor drifted.");
+  process.exit(1);
+}
+pgS81 = pgS81.replace(loopPropsP81Old, loopPropsP81New);
+
+const stateP81Old = 'const stopFlag = ref(false);\nlet transitionTimer = undefined;';
+const stateP81New =
+  'const stopFlag = ref(false);\n' +
+  'const runAlive = ref(false);\n' +
+  'let runStatusTimer = null;\n' +
+  'let transitionTimer = undefined;';
+if (!pgS81.includes(stateP81Old)) {
+  console.error("[patch-frontend] FAILED: P81 run state anchor drifted.");
+  process.exit(1);
+}
+pgS81 = pgS81.replace(stateP81Old, stateP81New);
+
+const controlP81Anchor = 'const controlBtn = async (action) => {';
+const runStatusP81 = [
+  'const scheduleRunStatusPoll = (delay = 3000) => {',
+  '  if (runStatusTimer) clearTimeout(runStatusTimer);',
+  '  runStatusTimer = setTimeout(refreshRunStatus, delay);',
+  '};',
+  '',
+  'const refreshRunStatus = async () => {',
+  '  if (!props.id) {',
+  '    runAlive.value = false;',
+  '    return;',
+  '  }',
+  '  try {',
+  '    const status = await getRunStatus(props.id);',
+  '    runAlive.value = Boolean(status?.alive);',
+  '  } catch (error) {',
+  '    // Do not enable a destructive control when process state is unknown.',
+  '    runAlive.value = false;',
+  '  } finally {',
+  '    scheduleRunStatusPoll(3000);',
+  '  }',
+  '};',
+  '',
+  controlP81Anchor,
+].join("\n");
+if (!pgS81.includes(controlP81Anchor)) {
+  console.error("[patch-frontend] FAILED: P81 control function anchor drifted.");
+  process.exit(1);
+}
+pgS81 = pgS81.replace(controlP81Anchor, runStatusP81);
+
+const clickP81Old = [
+  "const clickStop = async (flag) => {",
+  "  if (!flag) return;",
+  "  try {",
+  '    await controlBtn("stop");',
+  "    stopFlag.value = true;",
+  "    updateEnd.value = true;",
+  "    loopNumber.value = allData.value.length;",
+].join("\n");
+const clickP81New = [
+  "const clickStop = async (flag) => {",
+  "  if (!flag || !runAlive.value) return;",
+  "  try {",
+  '    await controlBtn("stop");',
+  "    runAlive.value = false;",
+  "    stopFlag.value = true;",
+  "    updateEnd.value = true;",
+  "    loopNumber.value = allData.value.length;",
+].join("\n");
+if (!pgS81.includes(clickP81Old)) {
+  console.error("[patch-frontend] FAILED: P81 clickStop anchor drifted.");
+  process.exit(1);
+}
+pgS81 = pgS81.replace(clickP81Old, clickP81New);
+
+const mountedP81Old = [
+  "onMounted(() => {",
+  "  firstTrace();",
+  "});",
+  "",
+  "// 在组件被卸载前移除全局点击事件监听",
+  "onUnmounted(() => {});",
+].join("\n");
+const mountedP81New = [
+  "onMounted(() => {",
+  "  firstTrace();",
+  "  refreshRunStatus();",
+  "});",
+  "",
+  "// 在组件被卸载前移除全局点击事件监听",
+  "onUnmounted(() => {",
+  "  if (runStatusTimer) clearTimeout(runStatusTimer);",
+  "  runStatusTimer = null;",
+  "});",
+].join("\n");
+if (!pgS81.includes(mountedP81Old)) {
+  console.error("[patch-frontend] FAILED: P81 mount/unmount anchor drifted.");
+  process.exit(1);
+}
+pgS81 = pgS81.replace(mountedP81Old, mountedP81New);
+fs.writeFileSync(pgPathP81, pgS81);
+
+const loopPathP81 = "/src/web/src/components/loop-component.vue";
+let loopS81 = fs.readFileSync(loopPathP81, "utf8");
+const buttonP81Old = ':disabled="stopFlag || isDone"';
+const buttonP81New = ':disabled="stopFlag || isDone || !canStop"';
+if (!loopS81.includes(buttonP81Old)) {
+  console.error("[patch-frontend] FAILED: P81 Stop disabled anchor drifted.");
+  process.exit(1);
+}
+loopS81 = loopS81.replace(buttonP81Old, buttonP81New);
+
+const classP81Old =
+  '          active: !isDone,\n' +
+  '          disable: isDone,';
+const classP81New =
+  '          active: !isDone && canStop,\n' +
+  '          disable: isDone || !canStop,';
+if (!loopS81.includes(classP81Old)) {
+  console.error("[patch-frontend] FAILED: P81 Stop class anchor drifted.");
+  process.exit(1);
+}
+loopS81 = loopS81.replace(classP81Old, classP81New);
+
+const propsP81Old =
+  '  updateEnd: Boolean,\n' +
+  '  traceName: String,';
+const propsP81New =
+  '  updateEnd: Boolean,\n' +
+  '  canStop: Boolean,\n' +
+  '  traceName: String,';
+if (!loopS81.includes(propsP81Old)) {
+  console.error("[patch-frontend] FAILED: P81 loop prop declaration anchor drifted.");
+  process.exit(1);
+}
+loopS81 = loopS81.replace(propsP81Old, propsP81New);
+
+const refsP81Old =
+  'const traceName = ref(props.traceName);\n' +
+  'const statusList = ref([]);';
+const refsP81New =
+  'const traceName = ref(props.traceName);\n' +
+  'const canStop = computed(() => Boolean(props.canStop));\n' +
+  'const statusList = ref([]);';
+if (!loopS81.includes(refsP81Old)) {
+  console.error("[patch-frontend] FAILED: P81 loop canStop computed anchor drifted.");
+  process.exit(1);
+}
+loopS81 = loopS81.replace(refsP81Old, refsP81New);
+
+const vueImportP81Old =
+  'import { ref, watch, onMounted, defineProps, defineEmits, nextTick } from "vue";';
+const vueImportP81New =
+  'import { ref, watch, onMounted, defineProps, defineEmits, nextTick, computed } from "vue";';
+if (!loopS81.includes(vueImportP81Old)) {
+  console.error("[patch-frontend] FAILED: P81 loop Vue import anchor drifted.");
+  process.exit(1);
+}
+loopS81 = loopS81.replace(vueImportP81Old, vueImportP81New);
+fs.writeFileSync(loopPathP81, loopS81);
+
+// Make a terminal empty RESULT explicit rather than visually ambiguous.
+const resultPathP81 = "/src/web/src/views/ResultPage.vue";
+let resultS81 = fs.readFileSync(resultPathP81, "utf8");
+const emptyP81Old =
+  '{{ !liveResultTerminal ? (liveResultSource ? "Continuation is starting. Completed source-loop results are being restored while the next loop runs." : "Run is starting or in progress. Results will appear here as soon as each loop writes metrics or feedback.") : "No structured result events are available for this trace. The raw run log can still be downloaded above." }}';
+const emptyP81New =
+  '{{ !liveResultTerminal ? (liveResultSource ? "Continuation is starting. Completed source-loop results are being restored while the next loop runs." : "Run is starting or in progress. Results will appear here as soon as each loop writes metrics or feedback.") : (liveResultFailure ? "The run ended before a valid scientific result was produced. See the execution-failure summary above." : "This is a completed historical trace, but no persisted structured RESULT rows could be reconstructed. The raw run log remains available above.") }}';
+if (!resultS81.includes(emptyP81Old)) {
+  console.error("[patch-frontend] FAILED: P81 terminal empty-result anchor drifted.");
+  process.exit(1);
+}
+resultS81 = resultS81.replace(emptyP81Old, emptyP81New);
+fs.writeFileSync(resultPathP81, resultS81);
+
+console.log("[patch-frontend] P81 historical process state + RESULT replay UX applied");

@@ -4386,4 +4386,254 @@ patch(
 )
 
 
+
+# ---------------------------------------------------------------- P81 historical trace state + self-healing RESULT replay
+# Opening a historical experiment is playback, not a new process. Two bad symptoms
+# shared one root cause: if no UI-convertible pickle was recovered, read_trace left
+# last_timestamp unset, so no END was synthesized and the old run looked live; and
+# /result/live could remain empty even though the trace itself was already terminal.
+
+_P81_REPLAY_STATE_OLD = '''    task.messages = []
+    last_timestamp = None
+    _replay_counts = {
+'''
+_P81_REPLAY_STATE_NEW = '''    task.messages = []
+    last_timestamp = None
+    last_storage_timestamp = None
+    _replay_counts = {
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P81_REPLAY_STATE_OLD,
+    _P81_REPLAY_STATE_NEW,
+    "P81 track raw persisted activity during historical replay",
+)
+
+_P81_REPLAY_LOOP_OLD = '''    for msg in fs.iter_msg():
+        try:
+            data = ws._obj_to_json(obj=msg.content, tag=msg.tag, id=id, timestamp=msg.timestamp.isoformat())
+'''
+_P81_REPLAY_LOOP_NEW = '''    for msg in fs.iter_msg():
+        # A pickle can be valid trace history even when it has no current UI
+        # representation. Keep its timestamp so historical completion state does not
+        # depend on whether WebStorage can render that particular object.
+        try:
+            last_storage_timestamp = msg.timestamp
+        except Exception:
+            pass
+        try:
+            data = ws._obj_to_json(obj=msg.content, tag=msg.tag, id=id, timestamp=msg.timestamp.isoformat())
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P81_REPLAY_LOOP_OLD,
+    _P81_REPLAY_LOOP_NEW,
+    "P81 preserve storage timestamp before UI conversion",
+)
+
+_P81_REPLAY_FINAL_OLD = '''    app.logger.info(
+        "Trace replay summary for %s: total_ui=%d hypothesis=%d metric=%d feedback=%d chart=%d",
+'''
+_P81_REPLAY_FINAL_NEW = '''    if last_timestamp is None and last_storage_timestamp is not None:
+        last_timestamp = last_storage_timestamp
+
+    app.logger.info(
+        "Trace replay summary for %s: total_ui=%d hypothesis=%d metric=%d feedback=%d chart=%d",
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P81_REPLAY_FINAL_OLD,
+    _P81_REPLAY_FINAL_NEW,
+    "P81 synthesize historical END even with zero convertible UI rows",
+)
+
+# Give the parent page an authoritative process-state endpoint. A trace existing on
+# disk does not mean there is a process that can be stopped.
+_P81_STATUS_ANCHOR = '''@app.route("/control", methods=["POST"])
+def control_process():
+'''
+_P81_STATUS_ROUTE = '''@app.route("/run/status", methods=["GET"])
+def run_status():
+    trace_id = str(request.args.get("id") or "").strip().strip("/")
+    if not trace_id:
+        return jsonify({"error": "Trace ID is required"}), 400
+
+    trace_dir = (log_folder_path / trace_id).resolve()
+    root = log_folder_path.resolve()
+    try:
+        if os.path.commonpath([str(trace_dir), str(root)]) != str(root):
+            return jsonify({"error": "Invalid trace ID"}), 400
+    except ValueError:
+        return jsonify({"error": "Invalid trace ID"}), 400
+
+    task = rdagent_processes.get(str(trace_dir))
+    alive = bool(task is not None and task.is_alive())
+    process_registered = bool(task is not None and task.process is not None)
+    return jsonify(
+        {
+            "id": trace_id,
+            "exists": bool(trace_dir.exists() and trace_dir.is_dir()),
+            "alive": alive,
+            "process_registered": process_registered,
+            "historical": bool(trace_dir.exists() and trace_dir.is_dir() and not alive),
+            "terminal_status": _read_terminal_status(trace_dir),
+        }
+    ), 200
+
+
+@app.route("/control", methods=["POST"])
+def control_process():
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P81_STATUS_ANCHOR,
+    _P81_STATUS_ROUTE,
+    "P81 expose authoritative run state",
+)
+
+_P81_CONTROL_MISSING_OLD = '''    if id not in rdagent_processes or rdagent_processes[id] is None:
+        return jsonify({"error": "No running process for given id"}), 400
+
+    task = rdagent_processes[id]
+
+    if task.process is None:
+        return jsonify({"error": "No running process for given id"}), 400
+'''
+_P81_CONTROL_MISSING_NEW = '''    if id not in rdagent_processes or rdagent_processes[id] is None:
+        return jsonify(
+            {
+                "status": "not_running",
+                "alive": False,
+                "id": data["id"],
+                "message": "This is a historical trace; there is no process to stop.",
+            }
+        ), 200
+
+    task = rdagent_processes[id]
+
+    if task.process is None:
+        return jsonify(
+            {
+                "status": "not_running",
+                "alive": False,
+                "id": data["id"],
+                "message": "This is a historical trace; there is no process to stop.",
+            }
+        ), 200
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P81_CONTROL_MISSING_OLD,
+    _P81_CONTROL_MISSING_NEW,
+    "P81 make stale Stop requests idempotent for historical traces",
+)
+
+# /result/live must work even if /trace has not yet lazily populated an in-memory
+# historical task. Recover direct RESULT messages through read_trace as a second path.
+_P81_RESULT_DIRECT_OLD = '''    # Append current in-memory messages after durable messages so the newest live
+    # payload wins when both sources contain the same loop/event.
+    # A continuation/branch must show its already-completed source loops immediately.
+'''
+_P81_RESULT_DIRECT_NEW = '''    if not disk_messages and not alive:
+        try:
+            _history_task = _get_or_create_task(str(trace_dir))
+            if _history_task.process is None and not _history_task.messages:
+                read_trace(trace_dir, id=str(trace_dir))
+                _history_task = _get_or_create_task(str(trace_dir))
+            if isinstance(_history_task.messages, list):
+                disk_messages = [
+                    _msg
+                    for _msg in _history_task.messages
+                    if isinstance(_msg, dict)
+                    and _msg.get("tag")
+                    in {
+                        "research.hypothesis",
+                        "feedback.metric",
+                        "feedback.hypothesis_feedback",
+                    }
+                ]
+                task = _history_task
+        except Exception:
+            app.logger.exception(
+                "Historical RESULT fallback replay failed for %s",
+                trace_dir,
+            )
+
+    # Append current in-memory messages after durable messages so the newest live
+    # payload wins when both sources contain the same loop/event.
+    # A continuation/branch must show its already-completed source loops immediately.
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P81_RESULT_DIRECT_OLD,
+    _P81_RESULT_DIRECT_NEW,
+    "P81 fallback live RESULT through historical trace replay",
+)
+
+# Old continuations created before P73 have no frozen inheritance file. Resolve their
+# ancestry once, then persist the result so subsequent opens do not recursively replay
+# a deep chain on every poll.
+_P81_PARENT_CACHE_OLD = '''    parent_messages, continuation_source = _resume_parent_result_messages(trace_dir)
+    parent_loops, _ = _live_result_snapshot_from_messages(parent_messages)
+'''
+_P81_PARENT_CACHE_NEW = '''    parent_messages, continuation_source = _resume_parent_result_messages(trace_dir)
+    _inherited_snapshot = trace_dir / "_resume_inherited_results.json"
+    if (
+        parent_messages
+        and isinstance(continuation_source, dict)
+        and not _inherited_snapshot.exists()
+    ):
+        try:
+            import json as _json
+
+            _payload = {
+                "messages": parent_messages,
+                "continuation_source": continuation_source,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "retrofit": True,
+            }
+            _tmp = _inherited_snapshot.with_suffix(".json.tmp")
+            _tmp.write_text(
+                _json.dumps(_payload, indent=2, default=str),
+                encoding="utf-8",
+            )
+            _tmp.replace(_inherited_snapshot)
+            app.logger.info(
+                "Retrofitted frozen RESULT inheritance for historical trace %s (%d messages)",
+                trace_dir,
+                len(parent_messages),
+            )
+        except Exception:
+            app.logger.exception(
+                "Failed to retrofit frozen RESULT inheritance for %s",
+                trace_dir,
+            )
+
+    parent_loops, _ = _live_result_snapshot_from_messages(parent_messages)
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P81_PARENT_CACHE_OLD,
+    _P81_PARENT_CACHE_NEW,
+    "P81 retrofit frozen RESULT inheritance for old continuations",
+)
+
+_P81_RESULT_DIAG_OLD = '''            "inherited_loop_count": len(parent_loops),
+            "terminal_status": _read_terminal_status(trace_dir),
+            "terminal": terminal,
+'''
+_P81_RESULT_DIAG_NEW = '''            "inherited_loop_count": len(parent_loops),
+            "direct_message_count": len(disk_messages),
+            "inherited_message_count": len(parent_messages),
+            "terminal_status": _read_terminal_status(trace_dir),
+            "terminal": terminal,
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P81_RESULT_DIAG_OLD,
+    _P81_RESULT_DIAG_NEW,
+    "P81 expose RESULT replay diagnostics",
+)
+
+
 print("All rdagent patches applied.", flush=True)
