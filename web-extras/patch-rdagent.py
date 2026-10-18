@@ -4628,4 +4628,320 @@ patch(
 )
 
 
+
+
+# ---------------------------------------------------------------- P82 historical RESULT 500 + stale Stop marker repair
+# P81 made historical liveness authoritative, but old traces can still carry a
+# terminal "stopped" marker written by the pre-P81 UI after the worker had already
+# exited. Historical RESULT payloads may also contain numpy/custom scalar values that
+# Flask's jsonify cannot serialize. Repair both without mutating the durable trace.
+
+_P82_EFFECTIVE_STATUS_OLD = '''    return payload
+
+
+@app.route("/run/status", methods=["GET"])
+'''
+_P82_EFFECTIVE_STATUS_NEW = '''    return payload
+
+
+def _effective_terminal_status(trace_dir: Path, task=None):
+    """Return the semantically valid terminal state without rewriting history."""
+    import re as _re
+
+    raw = _read_terminal_status(trace_dir)
+    if not isinstance(raw, dict) or raw.get("status") != "stopped":
+        return raw
+
+    # A genuinely live worker that was just stopped should keep its marker.
+    if task is not None and task.process is not None and task.is_alive():
+        return raw
+
+    stdout_path = trace_dir.parent / f"{trace_dir.name}.log"
+    if not stdout_path.exists():
+        return raw
+
+    try:
+        with stdout_path.open("rb") as _fh:
+            _fh.seek(0, 2)
+            _size = _fh.tell()
+            _fh.seek(max(0, _size - 262144))
+            _tail = _fh.read().decode("utf-8", errors="replace")
+
+        _lower = _tail.lower()
+        _already_failed = (
+            "execution failure recorded" in _lower
+            or "execution failure requires retry/repair" in _lower
+        )
+        _already_completed = (
+            "scenario fin_quant returned successfully; run complete" in _lower
+        )
+        if not (_already_failed and _already_completed):
+            return raw
+
+        _matches = _re.findall(
+            r"20\\d{2}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?",
+            _tail,
+        )
+        if not _matches:
+            return raw
+
+        _last_event = datetime.fromisoformat(_matches[-1]).replace(
+            tzinfo=timezone.utc
+        )
+        _marker_raw = str(raw.get("timestamp") or "").strip()
+        if not _marker_raw:
+            return raw
+        _marker_time = datetime.fromisoformat(
+            _marker_raw.replace("Z", "+00:00")
+        )
+        if _marker_time.tzinfo is None:
+            _marker_time = _marker_time.replace(tzinfo=timezone.utc)
+
+        # A Stop marker many minutes after an already-completed failure is a stale
+        # UI/control artifact, not the cause of the run termination.
+        if (_marker_time - _last_event).total_seconds() <= 300:
+            return raw
+
+        return {
+            "status": "execution_failed",
+            "reason": (
+                "The run had already ended with an execution failure before a later "
+                "Stop click. The stale Stop marker is ignored."
+            ),
+            "end_code": 1,
+            "timestamp": _last_event.isoformat(),
+            "stale_stop_marker": True,
+            "original_terminal_status": raw,
+        }
+    except Exception:
+        app.logger.exception(
+            "Could not validate historical terminal marker for %s",
+            trace_dir,
+        )
+        return raw
+
+
+@app.route("/run/status", methods=["GET"])
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P82_EFFECTIVE_STATUS_OLD,
+    _P82_EFFECTIVE_STATUS_NEW,
+    "P82 derive effective historical terminal state",
+)
+
+_P82_RUN_STATUS_OLD = '''            "terminal_status": _read_terminal_status(trace_dir),
+'''
+_P82_RUN_STATUS_NEW = '''            "terminal_status": _effective_terminal_status(trace_dir, task=task),
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P82_RUN_STATUS_OLD,
+    _P82_RUN_STATUS_NEW,
+    "P82 ignore stale historical Stop marker in run status",
+)
+
+_P82_REPLAY_STATUS_OLD = '''    _terminal_status = _read_terminal_status(log_path)
+'''
+_P82_REPLAY_STATUS_NEW = '''    _terminal_status = _effective_terminal_status(log_path, task=task)
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P82_REPLAY_STATUS_OLD,
+    _P82_REPLAY_STATUS_NEW,
+    "P82 use effective terminal state during historical replay",
+)
+
+# Parent inheritance must never take the entire RESULT endpoint down.
+_P82_PARENT_OLD = '''    parent_messages, continuation_source = _resume_parent_result_messages(trace_dir)
+    _inherited_snapshot = trace_dir / "_resume_inherited_results.json"
+'''
+_P82_PARENT_NEW = '''    try:
+        parent_messages, continuation_source = _resume_parent_result_messages(trace_dir)
+    except Exception as _parent_exc:
+        app.logger.exception(
+            "RESULT ancestry reconstruction failed for %s",
+            trace_dir,
+        )
+        parent_messages = []
+        continuation_source = {
+            "available": False,
+            "reason": "RESULT ancestry reconstruction failed",
+            "error_type": type(_parent_exc).__name__,
+        }
+
+    _inherited_snapshot = trace_dir / "_resume_inherited_results.json"
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P82_PARENT_OLD,
+    _P82_PARENT_NEW,
+    "P82 make RESULT ancestry reconstruction non-fatal",
+)
+
+# JSON-safe conversion for legacy numpy/pandas/custom scalar payloads.
+_P82_SAFE_JSON_ANCHOR = '''@app.route("/result/live", methods=["GET"])
+def live_result_snapshot():
+'''
+_P82_SAFE_JSON_NEW = '''def _result_json_safe(value):
+    import math as _math
+
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if _math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {
+            str(key): _result_json_safe(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple, set)):
+        return [_result_json_safe(item) for item in value]
+
+    # numpy/pandas scalar and array compatibility.
+    try:
+        if hasattr(value, "item"):
+            return _result_json_safe(value.item())
+    except Exception:
+        pass
+    try:
+        if hasattr(value, "tolist"):
+            return _result_json_safe(value.tolist())
+    except Exception:
+        pass
+    try:
+        if hasattr(value, "isoformat"):
+            return value.isoformat()
+    except Exception:
+        pass
+    return str(value)
+
+
+@app.route("/result/live", methods=["GET"])
+def live_result_snapshot():
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P82_SAFE_JSON_ANCHOR,
+    _P82_SAFE_JSON_NEW,
+    "P82 add JSON-safe historical RESULT conversion",
+)
+
+_P82_RESULT_RESPONSE_OLD = '''    return jsonify(
+        {
+            "id": trace_id,
+            "alive": alive,
+            "loops": loops,
+            "loop_count": len(loops),
+            "updated_at": updated_at,
+            "execution_failure": execution_failure,
+            "terminal_status": _read_terminal_status(trace_dir),
+            "terminal": terminal,
+            "continuation_source": continuation_source,
+            "inherited_loop_count": len(parent_loops),
+            "direct_message_count": len(disk_messages),
+            "inherited_message_count": len(parent_messages),
+        }
+    ), 200
+'''
+_P82_RESULT_RESPONSE_NEW = '''    _payload = {
+        "id": trace_id,
+        "alive": alive,
+        "loops": loops,
+        "loop_count": len(loops),
+        "updated_at": updated_at,
+        "execution_failure": execution_failure,
+        "terminal_status": _effective_terminal_status(trace_dir, task=task),
+        "terminal": terminal,
+        "continuation_source": continuation_source,
+        "inherited_loop_count": len(parent_loops),
+        "direct_message_count": len(disk_messages),
+        "inherited_message_count": len(parent_messages),
+    }
+    return jsonify(_result_json_safe(_payload)), 200
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P82_RESULT_RESPONSE_OLD,
+    _P82_RESULT_RESPONSE_NEW,
+    "P82 make live RESULT response serialization-safe",
+)
+
+# Add a non-sensitive stage diagnostic so a future replay problem can be localized
+# without access to server logs.
+_P82_DIAG_ANCHOR = '''@app.route("/stdout", methods=["GET"])
+def download_stdout_file():
+'''
+_P82_DIAG_NEW = '''@app.route("/result/diagnostic", methods=["GET"])
+def result_diagnostic():
+    trace_id = str(request.args.get("id") or "").strip().strip("/")
+    if not trace_id:
+        return jsonify({"error": "Trace ID is required"}), 400
+
+    trace_dir = (log_folder_path / trace_id).resolve()
+    root = log_folder_path.resolve()
+    try:
+        if os.path.commonpath([str(trace_dir), str(root)]) != str(root):
+            return jsonify({"error": "Invalid trace ID"}), 400
+    except ValueError:
+        return jsonify({"error": "Invalid trace ID"}), 400
+
+    if not trace_dir.exists() or not trace_dir.is_dir():
+        return jsonify({"error": "Trace not found"}), 404
+
+    task = rdagent_processes.get(str(trace_dir))
+    alive = bool(task is not None and task.is_alive())
+    result = {
+        "id": trace_id,
+        "alive": alive,
+        "historical": not alive,
+        "terminal_status": _effective_terminal_status(trace_dir, task=task),
+        "execution_failure": _live_result_execution_failure(trace_dir),
+        "resume_meta_exists": bool((trace_dir / "_resume_meta.json").exists()),
+        "frozen_inheritance_exists": bool(
+            (trace_dir / "_resume_inherited_results.json").exists()
+        ),
+    }
+
+    try:
+        direct = _collect_live_result_messages(trace_dir, str(trace_dir))
+        result["direct_result"] = {
+            "ok": True,
+            "message_count": len(direct),
+            "loop_count": len(_live_result_snapshot_from_messages(direct)[0]),
+        }
+    except Exception as exc:
+        result["direct_result"] = {
+            "ok": False,
+            "error_type": type(exc).__name__,
+        }
+
+    try:
+        parent, source = _resume_parent_result_messages(trace_dir)
+        result["inherited_result"] = {
+            "ok": True,
+            "message_count": len(parent),
+            "loop_count": len(_live_result_snapshot_from_messages(parent)[0]),
+            "source": source,
+        }
+    except Exception as exc:
+        result["inherited_result"] = {
+            "ok": False,
+            "error_type": type(exc).__name__,
+        }
+
+    return jsonify(_result_json_safe(result)), 200
+
+
+@app.route("/stdout", methods=["GET"])
+def download_stdout_file():
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P82_DIAG_ANCHOR,
+    _P82_DIAG_NEW,
+    "P82 add RESULT reconstruction diagnostic endpoint",
+)
+
+
 print("All rdagent patches applied.", flush=True)
