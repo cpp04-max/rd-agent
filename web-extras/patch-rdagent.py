@@ -4062,7 +4062,7 @@ _P80_FACTOR_TIMEOUT_OLD = '''        env = LocalEnv(conf=LocalConf(default_entry
 '''
 _P80_FACTOR_TIMEOUT_NEW = '''        _factor_timeout_raw = os.environ.get(
             "RDAGENT_FACTOR_EXEC_TIMEOUT_SECONDS",
-            "5400",
+            "7200",
         ).strip()
         _factor_timeout = (
             None
@@ -4943,6 +4943,74 @@ patch(
     _P82_DIAG_ANCHOR,
     _P82_DIAG_NEW,
     "P82 add RESULT reconstruction diagnostic endpoint",
+)
+
+
+
+
+# ---------------------------------------------------------------- P83 actual full-sample factor timeout path
+# P80 configured get_factor_env(), but QlibFactorRunner.process_factor_data ultimately
+# executes FactorFBWorkspace.execute(), whose subprocess.check_output timeout comes
+# from FACTOR_COSTEER_SETTINGS.file_based_execution_timeout (upstream default 3600s).
+# Configure that exact setting from the same RDAGENT_FACTOR_EXEC_TIMEOUT_SECONDS knob.
+_P83_FACTOR_SETTING_OLD = '''FACTOR_COSTEER_SETTINGS = FactorCoSTEERSettings()
+'''
+_P83_FACTOR_SETTING_NEW = '''FACTOR_COSTEER_SETTINGS = FactorCoSTEERSettings()
+
+_factor_file_timeout_raw = os.environ.get(
+    "RDAGENT_FACTOR_EXEC_TIMEOUT_SECONDS",
+    "7200",
+).strip()
+if _factor_file_timeout_raw.lower() not in {"", "0", "none"}:
+    FACTOR_COSTEER_SETTINGS.file_based_execution_timeout = max(
+        60,
+        int(_factor_file_timeout_raw),
+    )
+'''
+patch(
+    "rdagent/components/coder/factor_coder/config.py",
+    _P83_FACTOR_SETTING_OLD,
+    _P83_FACTOR_SETTING_NEW,
+    "P83 configure actual FactorFBWorkspace subprocess timeout",
+)
+
+_P83_FACTOR_EXEC_OLD = '''            try:
+                subprocess.check_output(
+                    f"{FACTOR_COSTEER_SETTINGS.python_bin} {execution_code_path}",
+'''
+_P83_FACTOR_EXEC_NEW = '''            try:
+                print(
+                    "[rd-agent] FACTOR_FILE_EXEC "
+                    f"factor={getattr(self.target_task, 'factor_name', '<unknown>')} "
+                    f"timeout={FACTOR_COSTEER_SETTINGS.file_based_execution_timeout}s "
+                    f"data_type={data_type}",
+                    flush=True,
+                )
+                subprocess.check_output(
+                    f"{FACTOR_COSTEER_SETTINGS.python_bin} {execution_code_path}",
+'''
+patch(
+    "rdagent/components/coder/factor_coder/factor.py",
+    _P83_FACTOR_EXEC_OLD,
+    _P83_FACTOR_EXEC_NEW,
+    "P83 log effective full-sample factor timeout",
+)
+
+# Clarify retry semantics: coding checkpoint is correct after an infrastructure/time
+# limit repair; if the factor remains intrinsically too slow, regenerate/simplify it.
+_P83_RESULT_RETRY_OLD = '''        "retry": "Retry this experiment from its last valid coding checkpoint.",
+'''
+_P83_RESULT_RETRY_NEW = '''        "retry": (
+            "Retry from the last valid coding checkpoint after increasing/fixing the "
+            "execution limit. If the same factor still times out, branch before coding "
+            "and regenerate a computationally simpler factor."
+        ),
+'''
+patch(
+    "rdagent/log/server/app.py",
+    _P83_RESULT_RETRY_OLD,
+    _P83_RESULT_RETRY_NEW,
+    "P83 clarify timeout retry action",
 )
 
 

@@ -48,8 +48,11 @@ primary_region = 'lax'
   RDAGENT_MAX_EPOCHS = "30"
   # P49: time-budget guard is action-aware. Factor iterations are usually much
   # faster than model training, so don't apply the old blanket 1-hour threshold.
-  RDAGENT_MIN_FACTOR_LOOP_SECONDS = "1800"
+  RDAGENT_MIN_FACTOR_LOOP_SECONDS = "7200"
   RDAGENT_MIN_MODEL_LOOP_SECONDS = "3600"
+  # Full-sample generated factor execution. This must match the FactorFBWorkspace
+  # subprocess timeout; upstream defaults to 3600s, which truncated valid long factors.
+  RDAGENT_FACTOR_EXEC_TIMEOUT_SECONDS = "7200"
   # Persist CoSTEER knowledge across runs/deployments on the /data volume so
   # later loops reuse learned implementation knowledge instead of re-evolving.
   FACTOR_CoSTEER_knowledge_base_path = "/data/costeer/factor_kb.pkl"

@@ -341,7 +341,7 @@ factor_config = read("rdagent/components/coder/factor_coder/config.py")
 p80_checks = {
     "factor_exec_timeout_configurable":
         "RDAGENT_FACTOR_EXEC_TIMEOUT_SECONDS" in factor_config
-        and '"5400"' in factor_config
+        and '"7200"' in factor_config
         and "running_timeout_period=_factor_timeout" in factor_config,
     "stop_descendant_hardening":
         "_descendant_pids" in server
@@ -406,5 +406,25 @@ for name, ok in p82_checks.items():
 _failed_p82 = [name for name, ok in p82_checks.items() if not ok]
 if _failed_p82:
     raise SystemExit("P82 backend regression checks failed: " + ", ".join(_failed_p82))
+
+
+factor_impl = read("rdagent/components/coder/factor_coder/factor.py")
+factor_conf = read("rdagent/components/coder/factor_coder/config.py")
+p83_checks = {
+    "actual_factor_file_timeout_configurable":
+        "RDAGENT_FACTOR_EXEC_TIMEOUT_SECONDS" in factor_conf
+        and "FACTOR_COSTEER_SETTINGS.file_based_execution_timeout = max(" in factor_conf
+        and '"7200"' in factor_conf,
+    "factor_timeout_runtime_marker":
+        "[rd-agent] FACTOR_FILE_EXEC" in factor_impl
+        and "FACTOR_COSTEER_SETTINGS.file_based_execution_timeout" in factor_impl,
+    "timeout_retry_guidance":
+        "regenerate a computationally simpler factor" in server,
+}
+for name, ok in p83_checks.items():
+    print("[backend-regression] " + name + ": " + ("OK" if ok else "FAIL"))
+_failed_p83 = [name for name, ok in p83_checks.items() if not ok]
+if _failed_p83:
+    raise SystemExit("P83 backend regression checks failed: " + ", ".join(_failed_p83))
 
 print("[backend-regression] all checks passed")
